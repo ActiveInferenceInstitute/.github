@@ -1,0 +1,29 @@
+name: Bug report
+description: Something is broken, incorrect, or unclear
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Commands, files, or links needed to see the problem.
+      placeholder: |
+        1. ...
+        2. ...
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, language and package versions, commit or release, if relevant.
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Logs, screenshots, or related issues.

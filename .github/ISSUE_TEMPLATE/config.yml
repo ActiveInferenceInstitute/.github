@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Community chat (Discord)
+    url: https://discord.activeinference.institute
+    about: Questions and conversation with the Active Inference community.
+  - name: Get involved with the Institute
+    url: https://activeinference.institute/get-involved/
+    about: Volunteering, internships, fellowships, partnerships, and contact information.
