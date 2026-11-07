@@ -1,0 +1,89 @@
+# Reusable Julia gate. `on: workflow_call` only; no repository calls it yet.
+#
+# Julia tooling only: no Python toolchain is imposed on a Julia repository.
+#
+# Required-context mapping (captured org ruleset baseline, 2026-11-06: 22
+# strings across 36 public repositories). The callee job name is
+# the required string; the caller job must use the same `name:`. Whether a caller
+# job's `name:` or a composite `<caller> / <callee>` string is reported is
+# UNVERIFIED until `prove-reusable-workflow-naming-and-canary` measures it.
+#
+#   notebooks -> "tests and notebooks (julia 1.13)"
+#                (ActiveInferenceImplementations) with the default matrix leg 1.13
+#
+# The job name states both gates, so `notebook-command` is expected for any
+# repository that calls this workflow with a mode that runs notebooks. Empty
+# notebook-command runs the package tests only; the name is a required-context
+# reproduction, not a claim about which steps ran.
+name: julia-ci (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      julia-versions:
+        description: JSON array of Julia versions for the matrix.
+        required: false
+        type: string
+        default: '["1.13"]'
+      project-path:
+        description: Path to the Julia project directory.
+        required: false
+        type: string
+        default: "."
+      instantiate-command:
+        description: Command that instantiates the committed environment.
+        required: false
+        type: string
+        default: "julia --project=. -e 'using Pkg; Pkg.instantiate()'"
+      test-command:
+        description: Test command.
+        required: false
+        type: string
+        default: "julia --project=. -e 'using Pkg; Pkg.test()'"
+      notebook-command:
+        description: Command that executes the committed notebooks; empty skips it.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: julia-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  notebooks:
+    # Required context: "tests and notebooks (julia 1.13)".
+    name: tests and notebooks (julia ${{ matrix.julia-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ${{ fromJSON(inputs.julia-versions) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.project-path }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Julia
+        uses: julia-actions/setup-julia@da908477b5db94c10ffce8cfea9f2b3b9d5db687 # v3.0.3
+        with:
+          version: ${{ matrix.julia-version }}
+
+      - name: Cache Julia artifacts and packages
+        uses: julia-actions/cache@9353db09a0f2bbbdec6f41791918c75d37391b36 # v3.5.0
+
+      - name: Instantiate the project
+        run: ${{ inputs.instantiate-command }}
+
+      - name: Run the tests
+        run: ${{ inputs.test-command }}
+
+      - name: Execute the notebooks
+        if: ${{ inputs.notebook-command != '' }}
+        run: ${{ inputs.notebook-command }}

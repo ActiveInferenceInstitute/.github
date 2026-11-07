@@ -1,0 +1,71 @@
+# One pinned way to install uv and a CPython interpreter.
+#
+# Adopting repositories call it as a step, pinned by commit:
+#
+#   - uses: ActiveInferenceInstitute/.github/.github/actions/setup-python-uv@<40-hex>
+#     with:
+#       python-version: "3.12"
+#
+# It changes no job name, which is why it is the safest adoption surface: a
+# repository can adopt it without touching the job that produces a required
+# status-check context.
+#
+# The reusable workflows in this repository inline the same pinned steps instead
+# of referencing this path, because a called workflow's `./` paths resolve
+# against the caller's checkout, not this repository.
+name: Set up Python with uv
+description: Install a pinned uv and CPython interpreter, with uv's dependency cache enabled.
+author: ActiveInferenceInstitute
+
+inputs:
+  python-version:
+    description: CPython version to install through uv, for example "3.12".
+    required: false
+    default: "3.12"
+  uv-version:
+    description: uv release to install, for example "0.13.7". Never leave this floating.
+    required: false
+    default: "0.13.7"
+  working-directory:
+    description: Directory that contains the project and its lockfile.
+    required: false
+    default: "."
+  enable-cache:
+    description: Enable the GitHub Actions cache for uv ("true" or "false").
+    required: false
+    default: "true"
+  cache-dependency-glob:
+    description: Glob, relative to working-directory, that keys the uv cache.
+    required: false
+    default: "**/uv.lock"
+  activate-environment:
+    description: Create and activate a uv virtual environment for later steps ("true" or "false").
+    required: false
+    default: "false"
+
+outputs:
+  uv-version:
+    description: The uv version that setup-uv installed.
+    value: ${{ steps.uv.outputs.uv-version }}
+  uv-path:
+    description: Absolute path to the installed uv binary.
+    value: ${{ steps.uv.outputs.uv-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install uv
+      id: uv
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      with:
+        version: ${{ inputs.uv-version }}
+        working-directory: ${{ inputs.working-directory }}
+        enable-cache: ${{ inputs.enable-cache }}
+        cache-dependency-glob: ${{ inputs.cache-dependency-glob }}
+        cache-python: "true"
+        activate-environment: ${{ inputs.activate-environment }}
+
+    - name: Install Python ${{ inputs.python-version }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: uv python install "${{ inputs.python-version }}"

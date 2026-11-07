@@ -1,0 +1,108 @@
+# Reusable readiness gate. `on: workflow_call` only; no repository calls it yet.
+#
+# Runs the org standard's checker against the caller repository. The standard is
+# checked out at an explicit 40-hex commit, so the result names the exact
+# checker that produced it and two runs on one caller commit stay repeatable.
+#
+# The gate is invoked with --check. Without --github the three CORE-INHERIT-*
+# github-api criteria cannot be evaluated and the checker exits 3 on purpose:
+# `unavailable` is never a pass. Pass with-github: true (the default) and give
+# the job a token that can read the repository.
+#
+# This job reproduces no required status-check context. It is an additive gate:
+# adopting it adds a new context named `readiness` and replaces none.
+name: readiness (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      standard-repository:
+        description: Repository that holds the readiness standard.
+        required: false
+        type: string
+        default: "ActiveInferenceInstitute/.github"
+      standard-ref:
+        description: 40-hex commit of the standard to evaluate with. Required; never a branch.
+        required: true
+        type: string
+      python-version:
+        description: CPython version for the checker. The standard requires 3.15 or newer.
+        required: false
+        type: string
+        default: "3.15"
+      uv-version:
+        description: uv release to install. Pin it; never leave it floating.
+        required: false
+        type: string
+        default: "0.13.7"
+      tier:
+        description: Override the tier the checker derives from tracked files; empty uses the manifest or classification.
+        required: false
+        type: string
+        default: ""
+      with-github:
+        description: Evaluate the github-api criteria with the job token instead of reporting them unavailable.
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readiness-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  readiness:
+    # No required context: additive gate, replaces no existing check.
+    name: readiness
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Refuse a standard reference that is not a commit SHA
+        env:
+          STANDARD_REF: ${{ inputs.standard-ref }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$STANDARD_REF" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::standard-ref must be a 40-hex commit SHA, got '$STANDARD_REF'"
+            exit 1
+          fi
+
+      - name: Check out the readiness standard
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.standard-repository }}
+          ref: ${{ inputs.standard-ref }}
+          path: .aii-standard
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ inputs.python-version }}
+          enable-cache: true
+          cache-dependency-glob: ".aii-standard/uv.lock"
+
+      - name: Run the readiness gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TIER: ${{ inputs.tier }}
+          WITH_GITHUB: ${{ inputs.with-github }}
+        run: |
+          set -euo pipefail
+          args=(--repo "$GITHUB_REPOSITORY" --path "$GITHUB_WORKSPACE" --check)
+          if [ -n "$TIER" ]; then
+            args+=(--tier "$TIER")
+          fi
+          if [ "$WITH_GITHUB" = "true" ]; then
+            args+=(--github)
+          fi
+          uv run --frozen --project .aii-standard \
+            python .aii-standard/scripts/check_readiness.py "${args[@]}"
