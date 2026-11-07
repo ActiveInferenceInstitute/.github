@@ -1,0 +1,916 @@
+# AII Agent Readiness — criterion catalogue
+#
+# Criteria are data. Adding a criterion edits this file; it never requires editing
+# scripts/check_readiness.py. Every criterion id must resolve to one of the five
+# known kinds: file-exists, file-contains, yaml-path, command, github-api.
+#
+# Statuses are exactly: pass, fail, waived, unavailable, not-applicable.
+# New criteria enter with blocking: false and ratchet only after their tranche is green.
+
+schema: aii-readiness-standard/v1
+version: "1.0.0"
+
+tiers:
+  core:
+    title: Core
+    description: Every repository, every tier.
+  python-library:
+    title: Python library
+    includes: [core]
+  python-service:
+    title: Python service
+    includes: [core, python-library]
+  typescript-node:
+    title: TypeScript / Node
+    includes: [core]
+  typescript-bun:
+    title: TypeScript / Bun
+    includes: [core]
+  static-html:
+    title: Static HTML
+    includes: [core]
+  julia:
+    title: Julia
+    includes: [core]
+  notebook:
+    title: Notebook
+    includes: [core]
+  content-data:
+    title: Content and data
+    includes: [core]
+  org:
+    title: Org .github repository
+    includes: [core]
+
+criteria:
+  # -------------------------------------------------------------------------
+  # CORE — every repository, every tier
+  # -------------------------------------------------------------------------
+  - id: CORE-README
+    title: README exists and is non-empty
+    kind: file-exists
+    blocking: true
+    within: [core]
+    spec:
+      paths: [README, README.md, README.rst, README.txt]
+      non_empty: true
+
+  - id: CORE-README-COMMANDS
+    title: README documents install, run or test commands
+    kind: file-contains
+    blocking: false
+    within: [core]
+    spec:
+      paths: [README, README.md, README.rst, README.txt]
+      any_of:
+        - "(?m)^```"
+        - "(?m)^\\s*\\$ "
+        - "\\b(uv run|uv sync|pip install|npm (install|run|test)|bun (install|run|test)|pytest|make )\\b"
+
+  - id: CORE-AGENTS
+    title: AGENTS.md exists with repository-specific commands
+    kind: file-exists
+    blocking: true
+    within: [core]
+    spec:
+      paths: [AGENTS.md]
+      non_empty: true
+
+  - id: CORE-LICENSE
+    title: LICENSE or COPYING present, or a license declared in the manifest
+    kind: file-exists
+    blocking: true
+    within: [core]
+    spec:
+      paths: [LICENSE, "LICENSE.*", COPYING, "COPYING.*"]
+      declared_in: [pyproject.toml, package.json]
+
+  - id: CORE-GITIGNORE
+    title: .gitignore exists
+    kind: file-exists
+    blocking: true
+    within: [core]
+    spec:
+      paths: [.gitignore]
+
+  - id: CORE-LOCK
+    title: A committed dependency lock or pinned environment
+    kind: file-exists
+    blocking: true
+    within: [core]
+    spec:
+      paths:
+        - uv.lock
+        - poetry.lock
+        - Pipfile.lock
+        - pdm.lock
+        - requirements.txt
+        - "requirements-*.txt"
+        - package-lock.json
+        - pnpm-lock.yaml
+        - yarn.lock
+        - bun.lock
+        - bun.lockb
+        - Cargo.lock
+        - go.sum
+        - Manifest.toml
+        - Project.toml
+
+  - id: CORE-CI-ON
+    title: CI triggers on pull_request and pushes to the default branch
+    kind: yaml-path
+    blocking: true
+    within: [core]
+    spec:
+      files: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      match: any
+      require: [on.pull_request, on.push]
+      on_empty: fail
+
+  - id: CORE-CI-PERMISSIONS
+    title: Every workflow declares top-level permissions
+    kind: yaml-path
+    blocking: false
+    within: [core]
+    spec:
+      files: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      match: all
+      require: [permissions]
+      on_empty: not-applicable
+
+  - id: CORE-CI-TIMEOUT
+    title: Every job declares timeout-minutes
+    kind: yaml-path
+    blocking: false
+    within: [core]
+    spec:
+      files: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      match: all
+      require: [jobs.*.timeout-minutes]
+      on_empty: not-applicable
+
+  - id: CORE-CI-PINNED
+    title: Every remote uses is pinned to a 40-hex commit
+    kind: file-contains
+    blocking: false
+    within: [core]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      match: all
+      forbid: "(?m)^\\s*-?\\s*uses:\\s*(?!\\./)[^\\s@#]+@(?![0-9a-f]{40}(?:\\s|$))[^\\s#]+"
+      on_empty: not-applicable
+
+  - id: CORE-CI-CONCURRENCY
+    title: Every workflow declares concurrency with cancel-in-progress
+    kind: yaml-path
+    blocking: false
+    within: [core]
+    spec:
+      files: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      match: all
+      require: [concurrency, concurrency.cancel-in-progress]
+      expect:
+        concurrency.cancel-in-progress: true
+      on_empty: not-applicable
+
+  - id: CORE-DEPENDABOT
+    title: .github/dependabot.yml exists
+    kind: file-exists
+    blocking: true
+    within: [core]
+    spec:
+      paths: [.github/dependabot.yml, .github/dependabot.yaml]
+
+  - id: CORE-DEPENDABOT-ECOSYSTEM
+    title: Dependabot watches the lock ecosystem the repository actually uses
+    kind: yaml-path
+    blocking: true
+    within: [core]
+    spec:
+      files: [.github/dependabot.yml, .github/dependabot.yaml]
+      on_empty: fail
+      ecosystems:
+        uv.lock: uv
+        poetry.lock: pip
+        Pipfile.lock: pip
+        pdm.lock: pip
+        requirements.txt: pip
+        package-lock.json: npm
+        pnpm-lock.yaml: npm
+        yarn.lock: npm
+        bun.lock: bun
+        bun.lockb: bun
+        Cargo.lock: cargo
+        go.sum: gomod
+        Manifest.toml: julia
+
+  - id: CORE-DEPENDABOT-COOLDOWN
+    title: Every dependabot update block declares a cooldown
+    kind: yaml-path
+    blocking: false
+    within: [core]
+    spec:
+      files: [.github/dependabot.yml, .github/dependabot.yaml]
+      match: all
+      require: [updates.*.cooldown]
+      on_empty: not-applicable
+
+  - id: CORE-READINESS
+    title: .aii/readiness.json is present, v1, with a 40-hex baseline commit
+    kind: file-contains
+    blocking: true
+    within: [core]
+    spec:
+      paths: [.aii/readiness.json]
+      all_of:
+        - '"schema"\\s*:\\s*"aii-readiness/v1"'
+        - '"commit"\\s*:\\s*"[0-9a-f]{40}"'
+
+  - id: CORE-ACTIONLINT
+    title: actionlint is clean on every workflow
+    kind: command
+    blocking: false
+    within: [core]
+    spec:
+      command: [actionlint, "-no-color"]
+      timeout: 120
+      skip_if_no_paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+  - id: CORE-INHERIT-CONTRIBUTING
+    title: CONTRIBUTING.md is present locally or inherited from the org
+    kind: github-api
+    blocking: false
+    within: [core]
+    spec:
+      endpoints:
+        - repos/{repo}/contents/CONTRIBUTING.md
+        - repos/{org}/.github/contents/CONTRIBUTING.md
+
+  - id: CORE-INHERIT-SECURITY
+    title: SECURITY.md is present locally or inherited from the org
+    kind: github-api
+    blocking: false
+    within: [core]
+    spec:
+      endpoints:
+        - repos/{repo}/contents/SECURITY.md
+        - repos/{org}/.github/contents/SECURITY.md
+
+  - id: CORE-INHERIT-CODEOWNERS
+    title: CODEOWNERS resolves for this repository
+    kind: github-api
+    blocking: false
+    within: [core]
+    spec:
+      endpoints:
+        - repos/{repo}/contents/.github/CODEOWNERS
+        - repos/{repo}/contents/CODEOWNERS
+        - repos/{repo}/contents/docs/CODEOWNERS
+        - repos/{org}/.github/contents/.github/CODEOWNERS
+
+  # -------------------------------------------------------------------------
+  # PY — python-library and python-service
+  # -------------------------------------------------------------------------
+  - id: PY-PYPROJECT
+    title: pyproject.toml declares [project]
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      regex: "(?m)^\\[project\\]"
+
+  - id: PY-UVLOCK
+    title: uv.lock is committed
+    kind: file-exists
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [uv.lock]
+
+  - id: PY-UVLOCK-CHECK
+    title: CI runs uv lock --check
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      all_of: ["uv lock --check"]
+
+  - id: PY-FROZEN
+    title: CI installs with uv sync --frozen
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      all_of: ["uv sync[^\\n]*--frozen"]
+
+  - id: PY-PYTHON-FLOOR
+    title: The requires-python floor is exercised by the CI matrix
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      floor_in_ci: true
+
+  - id: PY-TARGET-VERSION
+    title: Ruff sets an explicit target-version
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      regex: "(?m)^\\s*target-version\\s*="
+
+  - id: PY-RUFF-EXTEND
+    title: Ruff uses extend-select and never a bare select
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      all_of: ["(?m)^\\s*extend-select\\s*="]
+      forbid: "(?m)^\\s*select\\s*="
+
+  - id: PY-RUFF-CI
+    title: CI runs ruff check and ruff format --check
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      all_of: ["ruff check", "ruff format --check"]
+
+  - id: PY-MYPY-CONFIG
+    title: mypy is configured in pyproject.toml
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      regex: "(?m)^\\[tool\\.mypy"
+
+  - id: PY-MYPY-CI
+    title: CI runs mypy
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["\\bmypy\\b"]
+
+  - id: PY-PYTEST-CI
+    title: CI runs pytest
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["\\bpytest\\b"]
+
+  - id: PY-COVERAGE-CONFIG
+    title: Coverage is configured in pyproject.toml
+    kind: file-contains
+    blocking: false
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      regex: "(?m)^\\[tool\\.coverage"
+
+  - id: PY-COVERAGE-RUN
+    title: CI actually passes --cov
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["--cov(?:[=\\s]|$)"]
+
+  - id: PY-COVERAGE-GATE
+    title: A coverage threshold is declared and enforced in CI
+    kind: file-contains
+    blocking: false
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml, ".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["fail_under\\s*=", "--cov-fail-under"]
+
+  - id: PY-COVERAGE-MATCH
+    title: The pyproject coverage threshold equals the CI threshold
+    kind: file-contains
+    blocking: true
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      coverage_threshold_match: true
+
+  - id: PY-DURATIONS
+    title: pytest runs with --durations
+    kind: file-contains
+    blocking: false
+    within: [python-library]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["--durations"]
+
+  - id: PY-PRECOMMIT
+    title: .pre-commit-config.yaml mirrors the CI gates
+    kind: file-exists
+    blocking: false
+    within: [python-library]
+    spec:
+      paths: [.pre-commit-config.yaml]
+
+  - id: PY-DEPTRY
+    title: deptry is configured
+    kind: file-contains
+    blocking: false
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      any_of: ["\\bdeptry\\b"]
+
+  - id: PY-VULTURE
+    title: vulture is configured
+    kind: file-contains
+    blocking: false
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      any_of: ["\\bvulture\\b"]
+
+  - id: PY-COMPLEXITY
+    title: Ruff complexity rules are selected
+    kind: file-contains
+    blocking: false
+    within: [python-library]
+    spec:
+      paths: [pyproject.toml]
+      any_of: ["C901", "PLR0912", "PLR0915"]
+
+  # -------------------------------------------------------------------------
+  # PYSVC — python-service only
+  # -------------------------------------------------------------------------
+  - id: PYSVC-HEALTH
+    title: Health and readiness endpoints exist
+    kind: file-contains
+    blocking: false
+    within: [python-service]
+    spec:
+      paths: ["**/*.py"]
+      all_of: ["healthz", "readyz"]
+
+  - id: PYSVC-LOGGING
+    title: Structured logging is configured
+    kind: file-contains
+    blocking: false
+    within: [python-service]
+    spec:
+      paths: ["**/*.py"]
+      any_of: ["\\bstructlog\\b", "JsonFormatter", "logging\\.config", "json\\.dumps"]
+
+  - id: PYSVC-METRICS
+    title: Metrics are exposed
+    kind: file-contains
+    blocking: false
+    within: [python-service]
+    spec:
+      paths: ["**/*.py"]
+      any_of: ["prometheus_client", "/metrics"]
+
+  - id: PYSVC-TRACING
+    title: Tracing is configured
+    kind: file-contains
+    blocking: false
+    within: [python-service]
+    spec:
+      paths: ["**/*.py"]
+      any_of: ["opentelemetry", "trace_id", "\\btracing\\b"]
+
+  - id: PYSVC-ENV-TEMPLATE
+    title: An environment template is committed
+    kind: file-exists
+    blocking: false
+    within: [python-service]
+    spec:
+      paths: [.env.example, .env.template]
+
+  - id: PYSVC-RUNBOOK
+    title: A runbook is committed
+    kind: file-exists
+    blocking: false
+    within: [python-service]
+    spec:
+      paths: [RUNBOOK.md, docs/RUNBOOK.md, OPERATIONS.md]
+
+  - id: PYSVC-OPENAPI-DIFF
+    title: CI diffs the OpenAPI schema
+    kind: file-contains
+    blocking: false
+    within: [python-service]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["oasdiff", "openapi-diff", "openapi[^\\n]*diff"]
+
+  # -------------------------------------------------------------------------
+  # TS — typescript-node
+  # -------------------------------------------------------------------------
+  - id: TS-TSCONFIG
+    title: tsconfig.json exists
+    kind: file-exists
+    blocking: true
+    within: [typescript-node]
+    spec:
+      paths: [tsconfig.json]
+
+  - id: TS-TYPECHECK-CI
+    title: CI runs a type check
+    kind: file-contains
+    blocking: true
+    within: [typescript-node]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["tsc[^\\n]*--noEmit", "(npm|pnpm|yarn|bun) run typecheck"]
+
+  - id: TS-LINT-CI
+    title: CI runs a linter
+    kind: file-contains
+    blocking: true
+    within: [typescript-node]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["eslint", "\\bbiome\\b", "\\boxlint\\b", "prettier --check", "run lint"]
+
+  - id: TS-FORMATTER-CHECK
+    title: CI runs a formatter check
+    kind: file-contains
+    blocking: false
+    within: [typescript-node]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["prettier --check", "biome format", "dprint check"]
+
+  - id: TS-TEST-CI
+    title: CI runs the test suite with coverage
+    kind: file-contains
+    blocking: true
+    within: [typescript-node]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["vitest", "jest", "run test"]
+
+  - id: TS-BUILD-CI
+    title: CI runs the build
+    kind: file-contains
+    blocking: false
+    within: [typescript-node]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["run build", "vite build", "tsc -p", "tsc --build"]
+
+  - id: TS-LOCK
+    title: A Node lock file is committed
+    kind: file-exists
+    blocking: true
+    within: [typescript-node]
+    spec:
+      paths: [package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, bun.lockb]
+
+  - id: TS-NODE-PIN
+    title: The Node version is pinned and matches CI
+    kind: file-contains
+    blocking: false
+    within: [typescript-node]
+    spec:
+      paths: [package.json, .nvmrc]
+      node_pin: true
+
+  - id: TS-DEPENDABOT-NPM
+    title: Dependabot watches the npm ecosystem
+    kind: yaml-path
+    blocking: false
+    within: [typescript-node]
+    spec:
+      files: [.github/dependabot.yml, .github/dependabot.yaml]
+      on_empty: not-applicable
+      ecosystems:
+        package-lock.json: npm
+        pnpm-lock.yaml: npm
+        yarn.lock: npm
+
+  # -------------------------------------------------------------------------
+  # BUN — typescript-bun
+  # -------------------------------------------------------------------------
+  - id: BUN-LOCK
+    title: A Bun lock file is committed
+    kind: file-exists
+    blocking: true
+    within: [typescript-bun]
+    spec:
+      paths: [bun.lock, bun.lockb]
+
+  - id: BUN-PIN
+    title: The Bun version is pinned in CI
+    kind: file-contains
+    blocking: true
+    within: [typescript-bun]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["bun-version"]
+
+  - id: BUN-TEST-CI
+    title: CI runs the existing test script
+    kind: file-contains
+    blocking: true
+    within: [typescript-bun]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["bun (run )?test", "bun test"]
+
+  - id: BUN-TYPECHECK-CI
+    title: CI runs the existing typecheck script
+    kind: file-contains
+    blocking: true
+    within: [typescript-bun]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["bun (run )?typecheck", "tsc --noEmit"]
+
+  - id: BUN-LINT-CI
+    title: CI runs the existing lint script
+    kind: file-contains
+    blocking: false
+    within: [typescript-bun]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["bun (run )?lint", "\\beslint\\b", "\\bbiome\\b", "\\boxlint\\b"]
+
+  - id: BUN-BUILD-CI
+    title: CI runs the existing build script
+    kind: file-contains
+    blocking: false
+    within: [typescript-bun]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["bun (run )?build"]
+
+  # -------------------------------------------------------------------------
+  # HTML — static-html
+  # -------------------------------------------------------------------------
+  - id: HTML-VALIDATE
+    title: CI validates the HTML
+    kind: file-contains
+    blocking: true
+    within: [static-html]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["html-validate", "htmlhint", "\\bvnu\\b", "\\btidy\\b"]
+
+  - id: HTML-FORMAT-CHECK
+    title: CI checks formatting with prettier
+    kind: file-contains
+    blocking: false
+    within: [static-html]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["prettier[^\\n]*--check"]
+
+  - id: HTML-LINKS
+    title: CI checks links
+    kind: file-contains
+    blocking: true
+    within: [static-html]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["lychee", "linkinator", "markdown-link-check", "htmlproofer"]
+
+  - id: HTML-NO-COVERAGE-GATE
+    title: No coverage gate is imposed on generated HTML
+    kind: file-contains
+    blocking: false
+    within: [static-html]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml", pyproject.toml, package.json]
+      forbid: "(--cov-fail-under|fail_under\\s*=|coverageThreshold)"
+      on_empty: not-applicable
+
+  - id: HTML-CNAME-MATCH
+    title: A CNAME matches the published host in the workflow
+    kind: file-contains
+    blocking: true
+    within: [static-html]
+    spec:
+      paths: [CNAME]
+      cname_match: true
+
+  # -------------------------------------------------------------------------
+  # JL — julia
+  # -------------------------------------------------------------------------
+  - id: JL-PROJECT
+    title: Project.toml exists
+    kind: file-exists
+    blocking: true
+    within: [julia]
+    spec:
+      paths: [Project.toml]
+
+  - id: JL-FORMATTER
+    title: JuliaFormatter runs through pre-commit
+    kind: file-contains
+    blocking: true
+    within: [julia]
+    spec:
+      paths: [.pre-commit-config.yaml]
+      any_of: ["JuliaFormatter", "julia[^\\n]*format"]
+
+  - id: JL-TEST-CI
+    title: CI runs Pkg.test()
+    kind: file-contains
+    blocking: true
+    within: [julia]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["Pkg\\.test"]
+
+  # -------------------------------------------------------------------------
+  # NB — notebook
+  # -------------------------------------------------------------------------
+  - id: NB-RUFF-CLEAN
+    title: Ruff is clean for the notebook tier
+    kind: command
+    blocking: false
+    within: [notebook]
+    spec:
+      command: [ruff, check, "."]
+      timeout: 120
+
+  - id: NB-STRIPOUT
+    title: Notebook outputs are stripped in CI or pre-commit
+    kind: file-contains
+    blocking: false
+    within: [notebook]
+    spec:
+      paths:
+        - .github/workflows/*.yml
+        - .github/workflows/*.yaml
+        - .pre-commit-config.yaml
+      any_of: ["nbstripout", "strip-output", "nbconvert"]
+
+  - id: NB-EXCLUDED-FROM-TYPECHECK
+    title: Notebooks are excluded from type checking
+    kind: file-contains
+    blocking: true
+    within: [notebook]
+    spec:
+      paths: [pyproject.toml, ".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["(?i)exclude[^\\n]*ipynb", "(?i)ipynb[^\\n]*exclude"]
+
+  - id: NB-EXCLUDED-FROM-COVERAGE
+    title: Notebooks are excluded from coverage
+    kind: file-contains
+    blocking: false
+    within: [notebook]
+    spec:
+      paths: [pyproject.toml]
+      any_of: ["(?i)(omit|exclude)[^\\n]*ipynb"]
+
+  # -------------------------------------------------------------------------
+  # CD — content-data
+  # -------------------------------------------------------------------------
+  - id: CD-LINKS
+    title: CI checks links
+    kind: file-contains
+    blocking: true
+    within: [content-data]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["lychee", "linkinator", "markdown-link-check", "htmlproofer"]
+
+  - id: CD-FRONTMATTER
+    title: CI validates front matter
+    kind: file-contains
+    blocking: false
+    within: [content-data]
+    spec:
+      paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+      any_of: ["front-?matter", "\\bremark\\b", "gray-matter"]
+
+  - id: CD-NO-TESTFRAMEWORK-REQUIRED
+    title: No test framework was added to satisfy a metric
+    kind: file-contains
+    blocking: false
+    within: [content-data]
+    spec:
+      paths: [pyproject.toml, package.json, "requirements*.txt"]
+      forbid: "(?i)\\b(pytest|jest|vitest|mocha)\\b"
+      on_empty: not-applicable
+
+  # -------------------------------------------------------------------------
+  # ORG — the org .github repository itself
+  # -------------------------------------------------------------------------
+  - id: ORG-COMMUNITY-HEALTH
+    title: The community-health baseline is preserved (ten tracked files)
+    kind: file-exists
+    blocking: true
+    within: [org]
+    spec:
+      match: all
+      paths:
+        - CODE_OF_CONDUCT.md
+        - CONTRIBUTING.md
+        - PULL_REQUEST_TEMPLATE.md
+        - README.md
+        - SECURITY.md
+        - SUPPORT.md
+        - .github/ISSUE_TEMPLATE/bug_report.yml
+        - .github/ISSUE_TEMPLATE/feature_request.yml
+        - .github/ISSUE_TEMPLATE/config.yml
+        - profile/README.md
+      non_empty: true
+
+  - id: ORG-CODEOWNERS
+    title: CODEOWNERS is present
+    kind: file-exists
+    blocking: true
+    within: [org]
+    spec:
+      paths: [CODEOWNERS, .github/CODEOWNERS]
+      non_empty: true
+
+  - id: ORG-FUNDING
+    title: FUNDING.yml is present and valid YAML
+    kind: file-exists
+    blocking: true
+    within: [org]
+    spec:
+      paths: [.github/FUNDING.yml, FUNDING.yml]
+      parses: yaml
+      non_empty: true
+
+  - id: ORG-TIERS-YAML
+    title: standards/tiers.yaml parses and declares the criterion catalogue
+    kind: file-contains
+    blocking: true
+    within: [org]
+    spec:
+      paths: [standards/tiers.yaml]
+      all_of:
+        - "(?m)^schema:\\s*aii-readiness-standard/v1"
+        - "(?m)^criteria:"
+
+  - id: ORG-CHECKER-DETERMINISTIC
+    title: Two ledger runs on one commit produce byte-identical JSON
+    kind: command
+    blocking: true
+    within: [org]
+    spec:
+      command: [uv, run, pytest, -q, tests/test_check_readiness.py, -k, determinism]
+      timeout: 240
+
+  - id: ORG-CHECKER-TESTS
+    title: The checker unit tests exist and pass
+    kind: command
+    blocking: true
+    within: [org]
+    spec:
+      command: [uv, run, pytest, -q, tests/test_check_readiness.py]
+      timeout: 300
+
+  - id: ORG-CHECKER-EXIT-CODES
+    title: The 0/1/2/3 exit-code semantics hold
+    kind: command
+    blocking: true
+    within: [org]
+    spec:
+      command: [uv, run, pytest, -q, tests/test_check_readiness.py, -k, exit_code]
+      timeout: 240
+
+  - id: ORG-REUSABLE-WORKFLOWS
+    title: Every workflow is actionlint-clean
+    kind: command
+    blocking: true
+    within: [org]
+    spec:
+      command: [actionlint, "-no-color"]
+      timeout: 120
+      skip_if_no_paths: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
+
+  - id: ORG-LEDGER-PUBLIC-ONLY
+    title: The published ledger contains zero private repository names
+    kind: file-contains
+    blocking: true
+    within: [org]
+    spec:
+      paths: [standards/public-ledger.json]
+      forbid: "(?i)\"(aii-[a-z]+|InstituteOS|PyDMB|nest-internal|apis-seq|ivm-xyz|GenerativeResearchTeams|VariationalEvolution|Active_Cardference|Active_Inference_Fractal|Active_Trailference|Embodied_Dissociative_Absorption)\""
+
+  - id: ORG-STANDARD-README
+    title: standards/README.md documents the standard
+    kind: file-contains
+    blocking: false
+    within: [org]
+    spec:
+      paths: [standards/README.md]
+      regex: "(?m)^##+\\s+\\S"
