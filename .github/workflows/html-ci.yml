@@ -1,0 +1,121 @@
+# Reusable static-HTML / content gate. `on: workflow_call` only; no repository
+# calls it yet.
+#
+# The gate is command-driven on purpose: the HTML and content-data repositories
+# already ship different validators (Journal-Utilities scripts, ontology checks,
+# link checkers), so this workflow standardises the job identity and the runner
+# setup, never the repository's own validation rules.
+#
+# Required-context mapping (captured org ruleset baseline, 2026-11-06: 22
+# strings across 36 public repositories). The callee job name is
+# the required string; the caller job must use the same `name:`. Whether a caller
+# job's `name:` or a composite `<caller> / <callee>` string is reported is
+# UNVERIFIED until `prove-reusable-workflow-naming-and-canary` measures it.
+#
+#   validate -> "validate" (ActiveInferenceJournal, Active_Inference_Ontology)
+#   links    -> "markdown-link-check" (gen25)
+#
+# A job that is not required by any ruleset is not added here; the workflow has
+# exactly the two jobs whose names must reproduce a context.
+name: html-ci (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      validate-command:
+        description: Command that validates the repository's HTML/data content. Required.
+        required: true
+        type: string
+      links-command:
+        description: Command that checks links. Required.
+        required: true
+        type: string
+      format-command:
+        description: Optional formatting check run after validate-command; empty skips it.
+        required: false
+        type: string
+        default: ""
+      node-version:
+        description: Node.js version made available to both jobs.
+        required: false
+        type: string
+        default: "24"
+      working-directory:
+        description: Directory that contains the content and its tooling.
+        required: false
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+concurrency:
+  group: html-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    # Required context: "validate" (ActiveInferenceJournal, Active_Inference_Ontology).
+    name: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Refuse an empty validate command
+        env:
+          VALIDATE_COMMAND: ${{ inputs.validate-command }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VALIDATE_COMMAND" ]; then
+            echo "::error::validate-command must not be empty"
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          package-manager-cache: false
+
+      - name: Run the repository validation
+        run: ${{ inputs.validate-command }}
+
+      - name: Run the formatting check
+        if: ${{ inputs.format-command != '' }}
+        run: ${{ inputs.format-command }}
+
+  links:
+    # Required context: "markdown-link-check" (gen25).
+    name: markdown-link-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Refuse an empty links command
+        env:
+          LINKS_COMMAND: ${{ inputs.links-command }}
+        run: |
+          set -euo pipefail
+          if [ -z "$LINKS_COMMAND" ]; then
+            echo "::error::links-command must not be empty"
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          package-manager-cache: false
+
+      - name: Run the link check
+        run: ${{ inputs.links-command }}

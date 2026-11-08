@@ -1,0 +1,135 @@
+# Reusable Node.js gate. `on: workflow_call` only; no repository calls it yet.
+#
+# Required-context mapping (captured org ruleset baseline, 2026-11-06: 22
+# strings across 36 public repositories). The callee job name is
+# the required string; the caller job must use the same `name:`. Whether a caller
+# job's `name:` or a composite `<caller> / <callee>` string is reported is
+# UNVERIFIED until `prove-reusable-workflow-naming-and-canary` measures it.
+#
+#   build          -> "build, test harness and knowledge base (node 24, locked install)"
+#                     (Research-Discovery-Engine) with the default matrix leg 24
+#   build-and-check -> "build-and-check (24, 3.12)" (institute_website) with the
+#                     default matrix legs 24 and 3.12
+#
+# The literal text inside a required context is reproduced by the matrix
+# expressions, not copied into the name, so changing a leg changes the reported
+# string and cannot silently satisfy the wrong ruleset.
+name: node-ci (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      node-versions:
+        description: JSON array of Node.js versions for both jobs.
+        required: false
+        type: string
+        default: '["24"]'
+      python-versions:
+        description: JSON array of CPython versions for the build-and-check job.
+        required: false
+        type: string
+        default: '["3.12"]'
+      working-directory:
+        description: Directory that contains the npm project.
+        required: false
+        type: string
+        default: "."
+      install-command:
+        description: Deterministic install command; the default requires a committed lockfile.
+        required: false
+        type: string
+        default: "npm ci"
+      test-command:
+        description: Test command.
+        required: false
+        type: string
+        default: "npm test"
+      build-command:
+        description: Build command.
+        required: false
+        type: string
+        default: "npm run build"
+      check-command:
+        description: Extra non-browser check command; empty skips it.
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Required context: "build, test harness and knowledge base (node 24, locked install)".
+    name: build, test harness and knowledge base (node ${{ matrix.node-version }}, locked install)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ${{ fromJSON(inputs.node-versions) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install from the lockfile
+        run: ${{ inputs.install-command }}
+
+      - name: Run the test harness
+        run: ${{ inputs.test-command }}
+
+      - name: Build
+        run: ${{ inputs.build-command }}
+
+  build-and-check:
+    # Required context: "build-and-check (24, 3.12)".
+    name: build-and-check (${{ matrix.node-version }}, ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ${{ fromJSON(inputs.node-versions) }}
+        python-version: ${{ fromJSON(inputs.python-versions) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install from the lockfile
+        run: ${{ inputs.install-command }}
+
+      - name: Build
+        run: ${{ inputs.build-command }}
+
+      - name: Run the checks
+        if: ${{ inputs.check-command != '' }}
+        run: ${{ inputs.check-command }}

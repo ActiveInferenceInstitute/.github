@@ -1,0 +1,199 @@
+# Reusable Python gate. `on: workflow_call` only; no repository calls it yet.
+#
+# Required-context mapping (captured org ruleset baseline, 2026-11-06: 22
+# strings across 36 public repositories). A caller job must carry `name:` equal
+# to the mapped string; the callee job names below are set to the same string,
+# so the context is reproduced whichever of the two single-name behaviours the
+# naming experiment reports. Whether a caller job's `name:` or a composite
+# `<caller> / <callee>` string is reported is UNVERIFIED until
+# `prove-reusable-workflow-naming-and-canary` measures it. Do not adopt this
+# workflow on a gated repository before that report exists.
+#
+#   lint   -> "Lint & Type Check"                    (courses)
+#   checks -> "checks"                               (Garden-of-Iris, cognitive)
+#   test   -> "test (3.11)"                          (ATLAS, Start)
+#             "test (3.12)"                          (ISSS, act_inf_metaanalysis)
+#             "test (3.13)"                          (Symposium)
+#             "validate (3.11)" with test-job-name: validate   (AEOS)
+#             "quality (3.12)"  with test-job-name: quality    (Biofirm)
+#             "validate"        with test-job-name: validate  (ActiveInferenceJournal,
+#                                                              Active_Inference_Ontology)
+#
+# Not reproduced by this workflow, reported in the foundation handoff because a
+# job that has a matrix always reports a suffixed name:
+#   "test" (Journal_Utilities), "tests" (GEN24), "test (py3.12)"
+#   (ActiveBlockference, needs a `py` prefix), "probes (ubuntu-latest, 3.15)"
+#   (GEO_INFER, two-legged runner+version matrix), "test suite (python 3.12,
+#   frozen lock)" (pymcp), "Fast source checks" (Active_Fedference),
+#   "Pipeline gates, lint, and Lean budget" (policy_entanglement), and
+#   "repo-gates" (Generalized_Notation_Notation). Those repositories keep their
+#   own job until an adoption feature proves a template for its shape.
+name: python-ci (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      python-versions:
+        description: JSON array of CPython versions for the test matrix.
+        required: false
+        type: string
+        default: '["3.12"]'
+      test-job-name:
+        description: Base name of the matrix test job; set it to the base of the required context.
+        required: false
+        type: string
+        default: "test"
+      lint-python-version:
+        description: CPython version used by the lint and checks jobs.
+        required: false
+        type: string
+        default: "3.12"
+      uv-version:
+        description: uv release to install. Pin it; never leave it floating.
+        required: false
+        type: string
+        default: "0.13.7"
+      working-directory:
+        description: Directory that contains the project and its lockfile.
+        required: false
+        type: string
+        default: "."
+      install-command:
+        description: Command that installs the locked environment.
+        required: false
+        type: string
+        default: "uv sync --frozen"
+      lock-check:
+        description: Run `uv lock --check` before installing.
+        required: false
+        type: boolean
+        default: true
+      lint-command:
+        description: Ruff lint command.
+        required: false
+        type: string
+        default: "uv run ruff check ."
+      format-command:
+        description: Ruff formatting command.
+        required: false
+        type: string
+        default: "uv run ruff format --check ."
+      typecheck-command:
+        description: Static type-check command.
+        required: false
+        type: string
+        default: "uv run mypy ."
+      checks-command:
+        description: Extra repository checks run by the `checks` job; empty skips them.
+        required: false
+        type: string
+        default: ""
+      test-command:
+        description: Test command. Set it to the repository's validate command when reproducing a `validate` context.
+        required: false
+        type: string
+        default: "uv run pytest -q"
+
+permissions:
+  contents: read
+
+concurrency:
+  # Key pull-request runs by ref so a superseded head is cancelled, and every
+  # other run by commit so a merged tree's verdict is never cancelled.
+  group: python-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    # Required context: "Lint & Type Check" (courses).
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ inputs.lint-python-version }}
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
+
+      - name: Install the locked environment
+        run: ${{ inputs.install-command }}
+
+      - name: Ruff lint
+        run: ${{ inputs.lint-command }}
+
+      - name: Ruff format check
+        run: ${{ inputs.format-command }}
+
+      - name: Static type check
+        run: ${{ inputs.typecheck-command }}
+
+  checks:
+    # Required context: "checks" (Garden-of-Iris, cognitive).
+    name: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ inputs.lint-python-version }}
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
+
+      - name: Check that the lockfile matches the manifests
+        if: ${{ inputs.lock-check }}
+        run: uv lock --check
+
+      - name: Install the locked environment
+        run: ${{ inputs.install-command }}
+
+      - name: Run the repository checks
+        if: ${{ inputs.checks-command != '' }}
+        run: ${{ inputs.checks-command }}
+
+  test:
+    # Required contexts: "test (3.11)", "test (3.12)", "test (3.13)" and, via
+    # test-job-name, "validate (3.11)" and "quality (3.12)".
+    name: ${{ inputs.test-job-name }} (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(inputs.python-versions) }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
+
+      - name: Install the locked environment
+        run: ${{ inputs.install-command }}
+
+      - name: Run the test command
+        run: ${{ inputs.test-command }}

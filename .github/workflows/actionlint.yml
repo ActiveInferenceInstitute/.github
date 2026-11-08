@@ -1,0 +1,56 @@
+# Reusable workflow linter. `on: workflow_call` only; no repository calls it yet.
+#
+# This job reproduces no required status-check context. It is an additive gate:
+# adopting it adds a new context named `actionlint` and replaces none, so it can
+# never rename a gated check. shellcheck is present on GitHub-hosted runners, so
+# actionlint also lints every `run:` script.
+#
+# actionlint is installed from its pinned release tarball with a SHA-256 check
+# because the project publishes no action.yml; `rhysd/actionlint@<sha>` cannot
+# resolve as an action.
+name: actionlint (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: Directory that holds the repository's .github/workflows tree.
+        required: false
+        type: string
+        default: "."
+
+permissions:
+  contents: read
+
+concurrency:
+  group: actionlint-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    # No required context: additive gate, replaces no existing check.
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install actionlint 1.7.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl -sSfL -o "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" \
+            | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
+          echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
+
+      - name: Run actionlint
+        run: actionlint -no-color

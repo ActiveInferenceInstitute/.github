@@ -1,0 +1,152 @@
+# Reusable GNN conformance gate. `on: workflow_call` only; no repository calls it yet.
+#
+# NO GNN REVISION IS BAKED IN. The parser commit is a required workflow_call
+# input, because configured repositories pin different revisions, and a
+# revision in a job name is exactly what broke two rulesets.
+# The revision is validated as a 40-hex commit SHA; tags and branches are
+# refused so a caller cannot silently float the parser.
+#
+# Required-context mapping (captured org ruleset baseline, 2026-11-06: 22
+# strings across 36 public repositories). The callee job name is
+# the required string; the caller job must use the same `name:`. Whether a caller
+# job's `name:` or a composite `<caller> / <callee>` string is reported is
+# UNVERIFIED until `prove-reusable-workflow-naming-and-canary` measures it.
+#
+#   gnn-conformance -> "gnn conformance (pinned)"
+#                      (ActInf_RxInfer, Active_InferAnts, Active_Skillference,
+#                       CEREBRUM, active_fractal_rabbit,
+#                       active_inference_battleship,
+#                       active_inference_language_model,
+#                       active_inference_power, fep_formal, fundamentals,
+#                       on_policy_distillation)
+#
+# It does NOT reproduce the pre-existing version-suffixed string emitted by
+# active_inference_power and fundamentals. That string is unsatisfiable against
+# their rulesets and is repaired by `repair-unsatisfiable-required-contexts`,
+# not encoded here.
+#
+# Environment available to `conformance-command`:
+#   GNN_PYTHON      interpreter of the isolated runtime that has the pinned parser
+#   GNN_REVISION    the 40-hex revision that was installed
+#   GNN_TAG         the declared tag, or the empty string
+#   GNN_REPOSITORY  the upstream repository the revision came from
+name: gnn-conformance (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      revision:
+        description: GNN commit SHA to install. Required; never a tag or branch.
+        required: true
+        type: string
+      tag:
+        description: GNN release tag the revision belongs to, for example "v5". Empty skips the version assertion.
+        required: false
+        type: string
+        default: ""
+      repository:
+        description: Upstream repository that owns the revision.
+        required: false
+        type: string
+        default: "ActiveInferenceInstitute/Generalized_Notation_Notation"
+      python-version:
+        description: CPython version for the isolated parser runtime.
+        required: false
+        type: string
+        default: "3.12"
+      uv-version:
+        description: uv release to install. Pin it; never leave it floating.
+        required: false
+        type: string
+        default: "0.13.7"
+      working-directory:
+        description: Directory that contains the repository's conformance command.
+        required: false
+        type: string
+        default: "."
+      conformance-command:
+        description: Command that proves the repository conforms, run with the GNN_* environment below.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gnn-conformance-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  gnn-conformance:
+    # Required context: "gnn conformance (pinned)".
+    name: gnn conformance (pinned)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Refuse a revision that is not a commit SHA
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$REVISION" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::revision must be a 40-hex commit SHA, got '$REVISION'"
+            exit 1
+          fi
+
+      - name: Refuse an empty conformance command
+        env:
+          CONFORMANCE_COMMAND: ${{ inputs.conformance-command }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CONFORMANCE_COMMAND" ]; then
+            echo "::error::conformance-command must not be empty"
+            exit 1
+          fi
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ inputs.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
+
+      - name: Install the pinned parser into an isolated runtime
+        env:
+          GNN_REPOSITORY: ${{ inputs.repository }}
+          GNN_REVISION: ${{ inputs.revision }}
+          GNN_PYTHON_VERSION: ${{ inputs.python-version }}
+        run: |
+          set -euo pipefail
+          GNN_PYTHON="$RUNNER_TEMP/gnn-runtime/bin/python"
+          uv venv --python "$GNN_PYTHON_VERSION" "$RUNNER_TEMP/gnn-runtime"
+          uv pip install --python "$GNN_PYTHON" \
+            "generalized-notation-notation @ git+https://github.com/${GNN_REPOSITORY}.git@${GNN_REVISION}"
+
+      - name: Assert the installed version matches the declared tag
+        if: ${{ inputs.tag != '' }}
+        env:
+          GNN_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          GNN_PYTHON="$RUNNER_TEMP/gnn-runtime/bin/python"
+          installed="$("$GNN_PYTHON" -c 'import gnn; print(gnn.__version__)')"
+          expected="${GNN_TAG#v}"
+          if [ "$installed" != "$expected" ]; then
+            echo "::error::installed gnn $installed does not match $GNN_TAG"
+            exit 1
+          fi
+
+      - name: Run the repository conformance command
+        env:
+          GNN_PYTHON: ${{ runner.temp }}/gnn-runtime/bin/python
+          GNN_REVISION: ${{ inputs.revision }}
+          GNN_TAG: ${{ inputs.tag }}
+          GNN_REPOSITORY: ${{ inputs.repository }}
+        run: ${{ inputs.conformance-command }}
