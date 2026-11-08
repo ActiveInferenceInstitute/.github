@@ -1,0 +1,7 @@
+# GitHub funding configuration for ActiveInferenceInstitute repositories.
+#
+# The organization's donation page is the one already linked from
+# profile/README.md. GitHub reads this file from the org's .github repository and
+# shows a Sponsor button, so it names a first-party Active Inference Institute
+# URL rather than a third-party funding account.
+custom: ["https://donate.activeinference.institute/"]
