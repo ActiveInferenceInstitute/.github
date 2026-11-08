@@ -200,12 +200,21 @@ criteria:
     spec:
       files: [.github/dependabot.yml, .github/dependabot.yaml]
       on_empty: fail
+      # Lockfile precedence, most authoritative group first. The first group
+      # holding a present lockfile is the repository's real ecosystem and every
+      # lockfile present in it must be watched; lower groups are legacy and are
+      # ignored while a higher group is present. Selection never depends on
+      # alphabetical or declaration order, so a package-manager lockfile always
+      # outranks a legacy requirements.txt and a second real lockfile cannot be
+      # skipped.
+      precedence:
+        - [uv.lock, poetry.lock, Pipfile.lock, pdm.lock, package-lock.json, pnpm-lock.yaml, yarn.lock, bun.lock, bun.lockb, Cargo.lock, go.sum, Manifest.toml]
+        - [requirements.txt]
       ecosystems:
         uv.lock: uv
         poetry.lock: pip
         Pipfile.lock: pip
         pdm.lock: pip
-        requirements.txt: pip
         package-lock.json: npm
         pnpm-lock.yaml: npm
         yarn.lock: npm
@@ -214,6 +223,7 @@ criteria:
         Cargo.lock: cargo
         go.sum: gomod
         Manifest.toml: julia
+        requirements.txt: pip
 
   - id: CORE-DEPENDABOT-COOLDOWN
     title: Every dependabot update block declares a cooldown
