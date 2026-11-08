@@ -1,0 +1,58 @@
+# Throwaway naming experiment for `prove-reusable-workflow-naming-and-canary`.
+#
+# Purpose: measure, empirically, the status-check string GitHub reports for a
+# reusable-workflow caller job. Run only on the probe branch in this repository,
+# which has no ruleset, so no required context can be endangered. The branch is
+# never merged and never deleted.
+#
+# Jobs:
+#   named-local     -> local job with an explicit name:
+#   unnamed-local   -> local job with no name: (context should be the job id)
+#   matrix-local    -> matrix job whose name interpolates the leg
+#   named-caller    -> reusable-workflow caller job with an explicit name:
+#   unnamed-caller  -> reusable-workflow caller job with no name:
+name: probe reusable-workflow naming
+
+on:
+  push:
+    branches:
+      - readiness/probe-20261107
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  named-local:
+    name: probe named local job
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Echo
+        run: echo "named local"
+
+  unnamed-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Echo
+        run: echo "unnamed local"
+
+  matrix-local:
+    name: probe matrix ${{ matrix.leg }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [alpha, beta]
+    steps:
+      - name: Echo
+        run: echo "${{ matrix.leg }}"
+
+  named-caller:
+    name: probe named caller
+    uses: ./.github/workflows/probe-callee.yml
+
+  unnamed-caller:
+    uses: ./.github/workflows/probe-callee.yml

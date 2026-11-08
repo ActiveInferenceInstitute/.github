@@ -1,0 +1,18 @@
+# Throwaway probe target: a minimal reusable workflow with one named job.
+# Used only by the naming experiment on readiness/probe-20261107. Never merged.
+name: probe callee workflow
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  callee:
+    name: probe callee job
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Echo from the callee
+        run: echo "callee ran"
