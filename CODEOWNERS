@@ -1,0 +1,21 @@
+# Code owners for ActiveInferenceInstitute/.github.
+#
+# This repository is public and supplies the organization-wide community-health
+# defaults and the agent-readiness standard. It has no ruleset requiring
+# code-owner review, so this file is declarative: it records who maintains the
+# repository and it neither grants access nor blocks a merge.
+#
+# Every owner below is an existing GitHub user with write access to this
+# repository. Verify before editing:
+#   gh api repos/ActiveInferenceInstitute/.github/collaborators --jq '.[].login'
+#   gh api users/<login>                 # 200 for an existing account
+# Do not name a team that is not assigned to this repository; a team code owner
+# must have explicit write access or GitHub ignores the entry.
+
+* @docxology @hollygrimm
+
+# The published standard, the checker and the org-inherited workflow defaults.
+/standards/ @docxology @hollygrimm
+/scripts/ @docxology @hollygrimm
+/tests/ @docxology @hollygrimm
+/.github/ @docxology @hollygrimm

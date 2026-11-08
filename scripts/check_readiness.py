@@ -75,10 +75,19 @@ class ConfigError(Exception):
 
 
 @dataclass(frozen=True)
+class Exclusion:
+    """A criterion a tier cannot satisfy by construction, with the reason why."""
+
+    criterion: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class Tier:
     name: str
     title: str
     includes: tuple[str, ...] = ()
+    excludes: tuple[Exclusion, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -114,11 +123,23 @@ class Standard:
 
     def applicable(self, tier: str) -> tuple[Criterion, ...]:
         closure = self.tier_closure(tier)
+        excluded = self.exclusions(tier)
         return tuple(
             criterion
             for criterion in self.criteria
-            if any(member in closure for member in criterion.within)
+            if criterion.id not in excluded
+            and any(member in closure for member in criterion.within)
         )
+
+    def exclusions(self, tier: str) -> dict[str, str]:
+        """Criterion id to reason for every tier exclusion in ``tier``'s closure."""
+        if tier not in self.tiers:
+            raise ConfigError(f"unknown tier: {tier!r}")
+        result: dict[str, str] = {}
+        for member in sorted(self.tier_closure(tier)):
+            for exclusion in self.tiers[member].excludes:
+                result.setdefault(exclusion.criterion, exclusion.reason)
+        return result
 
 
 class GithubClient(Protocol):
@@ -243,10 +264,27 @@ def load_standard(path: Path) -> Standard:
             raise ConfigError("tier names must be non-empty strings")
         tier_doc = _as_mapping(tier_raw, f"tier {name}")
         includes = tuple(_as_string_list(tier_doc.get("includes"), f"tier {name}.includes"))
+        excludes_raw = tier_doc.get("excludes", []) or []
+        if not isinstance(excludes_raw, list):
+            raise ConfigError(f"tier {name}.excludes must be a list")
+        excludes: list[Exclusion] = []
+        for exclusion_index, exclusion_raw in enumerate(excludes_raw):
+            where = f"tier {name}.excludes[{exclusion_index}]"
+            exclusion_doc = _as_mapping(exclusion_raw, where)
+            criterion_id = exclusion_doc.get("criterion")
+            if not isinstance(criterion_id, str) or not criterion_id:
+                raise ConfigError(f"{where} must name a criterion")
+            reason = exclusion_doc.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                raise ConfigError(
+                    f"tier {name} exclusion for {criterion_id} needs a non-empty reason"
+                )
+            excludes.append(Exclusion(criterion=criterion_id, reason=" ".join(reason.split())))
         tiers[name] = Tier(
             name=name,
             title=str(tier_doc.get("title", name)),
             includes=includes,
+            excludes=tuple(excludes),
         )
     for tier in tiers.values():
         for included in tier.includes:
@@ -294,13 +332,27 @@ def load_standard(path: Path) -> Standard:
             )
         )
     criteria.sort(key=lambda criterion: criterion.id)
-    return Standard(
+    standard = Standard(
         schema=str(document["schema"]),
         version=str(document.get("version", "unversioned")),
         tiers=tiers,
         criteria=tuple(criteria),
         criteria_by_id={criterion.id: criterion for criterion in criteria},
     )
+    for tier in standard.tiers.values():
+        closure = standard.tier_closure(tier.name)
+        for exclusion in tier.excludes:
+            criterion = standard.criteria_by_id.get(exclusion.criterion)
+            if criterion is None:
+                raise ConfigError(
+                    f"tier {tier.name!r} excludes unknown criterion {exclusion.criterion!r}"
+                )
+            if not any(member in closure for member in criterion.within):
+                raise ConfigError(
+                    f"tier {tier.name!r} excludes {exclusion.criterion!r}, "
+                    "which does not apply to it"
+                )
+    return standard
 
 
 def _validate_spec(criterion_id: str, kind: str, spec: dict[str, Any]) -> None:
@@ -1124,6 +1176,7 @@ def evaluate_repo(
         index=index,
     )
     closure = standard.tier_closure(resolved_tier)
+    exclusions = standard.exclusions(resolved_tier)
     report = RepoReport(
         repo_id=repo_id,
         tier=resolved_tier,
@@ -1132,6 +1185,15 @@ def evaluate_repo(
         default_branch=branch,
     )
     for criterion in standard.criteria:
+        if criterion.id in exclusions:
+            excluded_by = exclusions[criterion.id]
+            report.criteria[criterion.id] = {
+                "kind": criterion.kind,
+                "blocking": criterion.blocking,
+                "status": "not-applicable",
+                "evidence": f"tier {resolved_tier} excludes {criterion.id}: {excluded_by}",
+            }
+            continue
         if not any(member in closure for member in criterion.within):
             report.criteria[criterion.id] = {
                 "kind": criterion.kind,
