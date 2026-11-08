@@ -1,0 +1,18 @@
+# Throwaway probe target: callee job named exactly like the required context.
+# Used only by the naming experiment on readiness/probe-20261107. Never merged.
+name: probe pinned callee workflow
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  conformance:
+    name: gnn conformance (pinned)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Echo from the callee
+        run: echo "pinned callee ran"

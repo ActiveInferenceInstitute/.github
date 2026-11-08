@@ -56,3 +56,14 @@ jobs:
 
   unnamed-caller:
     uses: ./.github/workflows/probe-callee.yml
+
+  # The exact shape the published gnn-conformance.yml expects adopters to use:
+  # caller job name == callee job name == the required context.
+  same-name-caller:
+    name: gnn conformance (pinned)
+    uses: ./.github/workflows/probe-callee-pinned.yml
+
+  # Whether a callee without a job-level name: can produce a bare caller string.
+  unnamed-callee-caller:
+    name: probe caller for unnamed callee
+    uses: ./.github/workflows/probe-callee-unnamed.yml

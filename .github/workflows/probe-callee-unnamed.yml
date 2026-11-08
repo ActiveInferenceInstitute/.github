@@ -1,0 +1,17 @@
+# Throwaway probe target: callee with no job name:, to test whether a reusable
+# caller can ever report a bare string. Used only on readiness/probe-20261107.
+name: probe unnamed callee workflow
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  callee:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Echo from the callee
+        run: echo "unnamed callee ran"
