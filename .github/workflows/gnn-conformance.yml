@@ -40,12 +40,20 @@ on:
         required: true
         type: string
       tag:
-        description: GNN release tag the revision belongs to, for example "v5". Empty skips the version assertion.
+        description: >-
+          GNN release tag the revision belongs to, for example "v5.0.3". The
+          leading "v" is stripped before comparison with gnn.__version__, so a
+          full released tag is required; "v5" would expect "5". Empty skips the
+          version assertion.
         required: false
         type: string
         default: ""
       repository:
-        description: Upstream repository that owns the revision.
+        description: >-
+          Upstream repository that owns the revision, in OWNER/REPO form (for
+          example "ActiveInferenceInstitute/Generalized_Notation_Notation").
+          Not a URL: the install command builds https://github.com/<input>.git,
+          so a full URL here produces a malformed remote.
         required: false
         type: string
         default: "ActiveInferenceInstitute/Generalized_Notation_Notation"

@@ -24,11 +24,17 @@ is a configuration error (exit 2), never a silent skip.
 
 | Kind | Semantics | Reported `unavailable` when |
 |---|---|---|
-| `file-exists` | a path or glob is present in the tracked tree | the working copy could not be read |
-| `file-contains` | a path is present and its regex / `all_of` / `any_of` / `forbid` rule matches; evidence names `path:line` | the path is absent |
+| `file-exists` | a path or glob is present in the tracked tree; `match: all` requires every declared path, and `non_empty: true` fails when a `match: all` path is empty (a single/any match passes if any matched file is non-empty) | the working copy could not be read |
+| `file-contains` | a path is present and its regex / `all_of` / `any_of` / `forbid` rule matches; evidence names `path:line` for `match: any` and for `match: all` | the file exists but cannot be read or decoded |
 | `yaml-path` | a dotted path resolves in a YAML document, with `*` meaning "every child" | the document does not parse |
 | `command` | a **bounded** local command exits 0 | the tool is missing or the command times out |
 | `github-api` | an opt-in REST read, enabled only by `--github` | the flag is absent, or the response is 403 / rate-limited |
+
+An **absent** path is a `fail`, never `unavailable`. The criterion asks whether
+the pattern is present, and a missing file is a definite answer; `unavailable`
+is reserved for the case where no answer can be obtained at all. The
+distinction is load-bearing: a waiver only converts `fail` to `waived`, so an
+absent path reported as `unavailable` could never be waived.
 
 A `command` criterion runs the specific gate the criterion names. It never runs
 a repository's whole test suite.
@@ -50,6 +56,12 @@ legacy while a higher group is present. Selection never depends on alphabetical
 or declaration order: `requirements.txt` + `uv.lock` requires `uv`, and
 `package-lock.json` + `uv.lock` requires both `npm` and `uv`. A repository whose
 real lockfile ecosystem is unwatched still fails the criterion.
+
+Lockfile presence is resolved from the **tracked tree** (`git ls-files`), like
+every other kind. A lockfile that exists on disk but is ignored or untracked is
+not one Dependabot can see, so it does not select an ecosystem; a repository
+with no tracked lockfile fails with `no tracked lock file matches a known
+ecosystem`, naming any ignored lockfile it found on disk.
 
 ## The five statuses
 
@@ -133,6 +145,18 @@ The checker rejects an exclusion that names an unknown criterion or a criterion
 that does not apply to the tier. Repositories outside the org tier still measure
 `CORE-CI-ON` normally: delegating a gate to a reusable workflow does not remove
 the adopter's obligation to declare its own `push`/`pull_request` triggers.
+
+### Known limitation: `CORE-CI-ON` does not check the pushed branch
+
+`CORE-CI-ON` measures that at least one workflow declares `on.pull_request` and
+`on.push`. It does **not** require `push` to name or include the repository's
+default branch, so a repository whose push trigger targets only a non-default
+branch still passes. This is a **known limitation, deliberately not tightened**:
+adding the branch filter would introduce a new blocking failure for every
+repository that has not yet adopted the standard, which the ratchet forbids. If
+branch targeting matters, it becomes a separate non-blocking criterion and is
+promoted only after its tranche is green. The criterion's title describes the
+intended state; the measurement is trigger presence.
 
 ## The ratchet
 
