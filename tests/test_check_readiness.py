@@ -891,6 +891,102 @@ def test_missing_working_copy_is_unavailable_in_all_mode(tmp_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
+# Tier exclusions
+# ---------------------------------------------------------------------------
+
+
+def _excluded_standard(tmp_path: Path, *, reason: str = "workflow_call-only standard") -> Path:
+    tiers = {
+        "core": {"title": "Core"},
+        "org": {
+            "title": "Org",
+            "includes": ["core"],
+            "excludes": [{"criterion": "CORE-CI-ON", "reason": reason}],
+        },
+    }
+    return _write_standard(
+        tmp_path,
+        [
+            _criterion(
+                "CORE-CI-ON",
+                "yaml-path",
+                files=[".github/workflows/*.yml"],
+                match="any",
+                require=["on.pull_request", "on.push"],
+                on_empty="fail",
+            )
+        ],
+        tiers=tiers,
+    )
+
+
+def test_tier_exclusion_reports_not_applicable_with_its_reason(tmp_path: Path) -> None:
+    standard = _excluded_standard(tmp_path)
+    repo = _make_repo(tmp_path, {"README.md": "hello\n"})
+    _write_manifest(repo, {"schema": "aii-readiness/v1", "tier": "org"})
+
+    result = _run_cli(*_repo_args(repo, standard, "--json"))
+    assert result.returncode == 0, result.stderr
+    entry = json.loads(result.stdout)["repos"]["ActiveInferenceInstitute/example"]["criteria"][
+        "CORE-CI-ON"
+    ]
+    assert entry["status"] == "not-applicable"
+    assert "workflow_call-only standard" in entry["evidence"]
+
+    checked = _run_cli(*_repo_args(repo, standard, "--check"))
+    assert checked.returncode == 0, checked.stderr
+
+
+def test_tier_exclusion_does_not_apply_to_a_sibling_tier(tmp_path: Path) -> None:
+    standard = _excluded_standard(tmp_path)
+    repo = _make_repo(tmp_path, {"README.md": "hello\n"})
+    _write_manifest(repo, {"schema": "aii-readiness/v1", "tier": "core"})
+
+    result = _run_cli(*_repo_args(repo, standard, "--json"))
+    assert result.returncode == 0, result.stderr
+    entry = json.loads(result.stdout)["repos"]["ActiveInferenceInstitute/example"]["criteria"][
+        "CORE-CI-ON"
+    ]
+    assert entry["status"] == "fail"
+
+
+def test_tier_exclusion_requires_a_non_empty_reason(tmp_path: Path) -> None:
+    module = _load_checker()
+    standard = _excluded_standard(tmp_path, reason="   ")
+    with pytest.raises(module.ConfigError):
+        module.load_standard(standard)
+
+
+def test_tier_exclusion_of_an_unknown_criterion_is_an_error(tmp_path: Path) -> None:
+    module = _load_checker()
+    tiers = {
+        "core": {"title": "Core"},
+        "org": {
+            "title": "Org",
+            "includes": ["core"],
+            "excludes": [{"criterion": "CORE-NOT-A-CRITERION", "reason": "typo"}],
+        },
+    }
+    standard = _write_standard(
+        tmp_path,
+        [_criterion("CORE-README", "file-exists", paths=["README.md"])],
+        tiers=tiers,
+    )
+    with pytest.raises(module.ConfigError):
+        module.load_standard(standard)
+
+
+def test_shipped_org_tier_excludes_core_ci_on_and_only_there() -> None:
+    module = _load_checker()
+    standard = module.load_standard(SHIPPED_STANDARD)
+    org_exclusions = standard.exclusions("org")
+    assert "CORE-CI-ON" in org_exclusions
+    assert org_exclusions["CORE-CI-ON"].strip()
+    for other_tier in ("core", "python-library", "static-html"):
+        assert "CORE-CI-ON" not in standard.exclusions(other_tier), other_tier
+
+
+# ---------------------------------------------------------------------------
 # The shipped catalogue
 # ---------------------------------------------------------------------------
 

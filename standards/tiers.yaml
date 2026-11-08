@@ -41,6 +41,17 @@ tiers:
   org:
     title: Org .github repository
     includes: [core]
+    # Tier exclusions are data, like criteria. An exclusion is not a waiver: it
+    # says the criterion cannot be met on this tier by construction, and it is
+    # reported not-applicable with the reason below, never as pass or fail.
+    excludes:
+      - criterion: CORE-CI-ON
+        reason: >-
+          The standard repository ships workflow_call-only reusable workflows by
+          design and never declares push or pull_request triggers itself, so a
+          repository-trigger criterion is unsatisfiable here by construction.
+          Adopters still declare their own push/pull_request triggers in the
+          local workflow that calls the reusable one.
 
 criteria:
   # -------------------------------------------------------------------------
