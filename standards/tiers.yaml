@@ -248,9 +248,12 @@ criteria:
     within: [core]
     spec:
       paths: [.aii/readiness.json]
+      # These are YAML single-quoted scalars, so escapes are literal: the
+      # pattern must carry one backslash (`\s`), not two (`\\s`), or it would
+      # require a literal backslash and could never match a valid manifest.
       all_of:
-        - '"schema"\\s*:\\s*"aii-readiness/v1"'
-        - '"commit"\\s*:\\s*"[0-9a-f]{40}"'
+        - '"schema"\s*:\s*"aii-readiness/v1"'
+        - '"commit"\s*:\s*"[0-9a-f]{40}"'
 
   - id: CORE-ACTIONLINT
     title: actionlint is clean on every workflow

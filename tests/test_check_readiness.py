@@ -1407,6 +1407,51 @@ def test_shipped_catalogue_documents_lockfile_precedence() -> None:
     } <= package_manager_group
 
 
+def test_shipped_readiness_patterns_match_a_valid_manifest(tmp_path: Path) -> None:
+    """The shipped CORE-READINESS regexes must match a real manifest.
+
+    The patterns are YAML single-quoted scalars, where escapes are literal. A
+    doubled backslash (`\\\\s`) would compile to "a literal backslash then s*"
+    and could never match `"schema": "aii-readiness/v1"`, so every repository
+    with a valid manifest would fail the blocking criterion.
+    """
+    module = _load_checker()
+    standard = module.load_standard(SHIPPED_STANDARD)
+    criterion = standard.criteria_by_id["CORE-READINESS"]
+
+    def evaluate() -> Any:
+        context = module.EvalContext(
+            repo_id="ActiveInferenceInstitute/example",
+            repo_path=tmp_path,
+            org="ActiveInferenceInstitute",
+            github=False,
+            github_client=None,
+            default_branch="main",
+            index=module.build_repo_index(tmp_path),
+        )
+        return module.evaluate_criterion(criterion, context)
+
+    _write_manifest(
+        tmp_path,
+        {
+            "schema": "aii-readiness/v1",
+            "tier": "core",
+            "baseline": {"commit": "a" * 40, "measured_at": "2026-11-07"},
+            "waivers": [],
+        },
+    )
+    passing = evaluate()
+    assert passing.status == "pass", passing.evidence
+    assert passing.evidence.startswith(".aii/readiness.json:"), passing.evidence
+
+    _write_manifest(
+        tmp_path,
+        {"schema": "aii-readiness/v2", "baseline": {"commit": "not-a-sha"}},
+    )
+    failing = evaluate()
+    assert failing.status == "fail", failing.evidence
+
+
 def test_shipped_standard_waiverless_unavailable_never_passes(tmp_path: Path) -> None:
     """No github-api criterion in the shipped catalogue may resolve to pass offline."""
     module = _load_checker()
