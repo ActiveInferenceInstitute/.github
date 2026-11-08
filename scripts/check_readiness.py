@@ -4,7 +4,7 @@
 The criterion catalogue lives in ``standards/tiers.yaml``; this program only knows
 the five evaluation kinds:
 
-``file-exists``   a path (or glob) is present in the working tree
+``file-exists``   a path (or glob) is present in the tracked tree
 ``file-contains`` a path is present and a regular expression matches
 ``yaml-path``     a dotted path resolves in a YAML document
 ``command``       a bounded local command exits zero
@@ -659,6 +659,16 @@ def evaluate_file_exists(criterion: Criterion, context: EvalContext) -> RunResul
             return _empty_result(str(spec.get("on_empty", "fail")), "no paths declared")
         return RunResult("fail", "none of: " + ", ".join(patterns))
 
+    if non_empty and match_all:
+        # ``match: all`` promises every declared path; an empty one is absent
+        # for its purpose, so it must fail rather than be filtered out of the
+        # count that produces the pass.
+        empty = [path for path in matched if path.stat().st_size == 0]
+        if empty:
+            return RunResult(
+                "fail",
+                "empty files: " + ", ".join(_relative(path, context.repo_path) for path in empty),
+            )
     readable = [path for path in matched if not non_empty or path.stat().st_size > 0]
     if not readable:
         first = _relative(matched[0], context.repo_path)
@@ -753,6 +763,17 @@ def _file_contains_result(path: Path, spec: dict[str, Any]) -> RunResult:
     return RunResult("fail", detail or "did not match")
 
 
+def _file_contains_evidence(path: Path, result: RunResult, context: EvalContext) -> str:
+    """Render the documented ``path:line`` evidence for a passing match."""
+    if result.evidence.isdigit():
+        detail = f":{result.evidence}"
+    elif result.evidence:
+        detail = f": {result.evidence}"
+    else:
+        detail = ": no forbidden match"
+    return f"{_relative(path, context.repo_path)}{detail}"
+
+
 def evaluate_file_contains(criterion: Criterion, context: EvalContext) -> RunResult:
     spec = criterion.spec
     if spec.get("floor_in_ci"):
@@ -779,17 +800,12 @@ def evaluate_file_contains(criterion: Criterion, context: EvalContext) -> RunRes
             if result.status != "pass":
                 where = _relative(path, context.repo_path)
                 return RunResult(result.status, f"{where}: {result.evidence}")
-        return RunResult("pass", f"{len(results)} files checked")
+        first_path, first_result = results[0]
+        return RunResult("pass", _file_contains_evidence(first_path, first_result, context))
     unavailable: list[str] = []
     for path, result in results:
         if result.status == "pass":
-            if result.evidence.isdigit():
-                detail = f":{result.evidence}"
-            elif result.evidence:
-                detail = f": {result.evidence}"
-            else:
-                detail = ": no forbidden match"
-            return RunResult("pass", f"{_relative(path, context.repo_path)}{detail}")
+            return RunResult("pass", _file_contains_evidence(path, result, context))
         if result.status == "unavailable":
             unavailable.append(_relative(path, context.repo_path))
     if unavailable:
@@ -973,6 +989,23 @@ def _lockfile_groups(criterion_id: str, spec: dict[str, Any]) -> list[list[str]]
     return groups
 
 
+def _present_lockfiles(context: EvalContext, names: list[str]) -> list[str]:
+    """Lockfiles that are both tracked and present, like every other kind.
+
+    Presence is resolved from the repository index (``git ls-files`` for a Git
+    working copy), not from a disk glance, so an ignored build artifact such as
+    a gitignored ``uv.lock`` cannot be cited as a lockfile GitHub can see.
+    """
+    tracked = set(context.index.files)
+    return [name for name in names if name in tracked and (context.repo_path / name).is_file()]
+
+
+def _untracked_lockfiles(context: EvalContext, names: list[str]) -> list[str]:
+    """Named lockfiles that exist on disk but are not tracked, for evidence only."""
+    tracked = set(context.index.files)
+    return [name for name in names if name not in tracked and (context.repo_path / name).is_file()]
+
+
 def _requires(
     document: Any, spec: dict[str, Any], context: EvalContext, criterion_id: str
 ) -> RunResult:
@@ -982,16 +1015,18 @@ def _requires(
         selected: list[str] = []
         lower: list[str] = []
         for index, group in enumerate(groups):
-            present = [name for name in group if (context.repo_path / name).is_file()]
+            present = _present_lockfiles(context, group)
             if present:
                 selected = present
                 for legacy_group in groups[index + 1 :]:
-                    lower.extend(
-                        name for name in legacy_group if (context.repo_path / name).is_file()
-                    )
+                    lower.extend(_present_lockfiles(context, legacy_group))
                 break
         if not selected:
-            return RunResult("fail", "no lock file matches a known ecosystem")
+            detail = "no tracked lock file matches a known ecosystem"
+            untracked = _untracked_lockfiles(context, [name for group in groups for name in group])
+            if untracked:
+                detail += "; untracked on disk: " + ", ".join(sorted(untracked))
+            return RunResult("fail", detail)
         updates: list[Any] = []
         if isinstance(document, dict) and isinstance(document.get("updates"), list):
             updates = document["updates"]
@@ -1115,6 +1150,12 @@ def classify_tier(
     The rules are the verified ones in ``library/readiness-standard.md``: tracked
     files only, dependency trees pruned, a depth-0 manifest decides, and GitHub's
     ``primaryLanguage`` is never consulted.
+
+    The single repository-specific branch is deliberate: the org ``.github``
+    repository maps to the ``org`` tier, because that tier exists for exactly one
+    repository. It is the only adopter special case; every other tier is decided
+    from tracked files alone. ``architecture.md`` records it as the one permitted
+    exception to "no repository-specific branching".
     """
     if repo_id is not None and repo_id.endswith("/.github"):
         return "org"

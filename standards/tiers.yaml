@@ -127,6 +127,11 @@ criteria:
         - Manifest.toml
         - Project.toml
 
+  # Known limitation, deliberately not tightened: this criterion measures that
+  # on.pull_request and on.push are declared. It does not require push to name
+  # the default branch. Adding that filter would create a new blocking failure
+  # for every repository that has not adopted yet, which the ratchet forbids;
+  # see standards/README.md ("Known limitation: CORE-CI-ON").
   - id: CORE-CI-ON
     title: CI triggers on pull_request and pushes to the default branch
     kind: yaml-path

@@ -102,6 +102,15 @@ def _write_manifest(repo: Path, document: dict[str, Any]) -> None:
     (aii / "readiness.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 def _write_scope(tmp_path: Path, rows: list[tuple[str, str]]) -> Path:
     """Write a scope TSV with (repo name, relative path) rows."""
     lines = ["repo\tvisibility\tlanguage\tdefault_branch\tdisk_kb\trel\tlocal\tdot_aii\tworkflows"]
@@ -182,6 +191,45 @@ def test_file_exists_glob_and_non_empty(tmp_path: Path) -> None:
     assert filled_report["criteria"]["CORE-DOC"]["status"] == "pass"
 
 
+def test_file_exists_match_all_non_empty_fails_on_any_empty_file(tmp_path: Path) -> None:
+    """``match: all`` + ``non_empty`` fails when any matched path is empty.
+
+    ``ORG-COMMUNITY-HEALTH`` is the shipped criterion using this combination:
+    all ten community-health files must be present *and* non-empty, so an
+    emptied file must fail rather than be silently dropped from the count.
+    """
+    standard = _write_standard(
+        tmp_path,
+        [
+            _criterion(
+                "ORG-COMMUNITY-HEALTH",
+                "file-exists",
+                match="all",
+                paths=["README.md", "SECURITY.md"],
+                non_empty=True,
+            )
+        ],
+    )
+    empty = _make_repo(tmp_path, {"README.md": "", "SECURITY.md": "report\n"}, name="empty")
+    filled = _make_repo(tmp_path, {"README.md": "readme\n", "SECURITY.md": "report\n"}, name="full")
+    module = _load_checker()
+
+    empty_result = module.evaluate_repo(
+        module.load_standard(standard), "ActiveInferenceInstitute/example", empty
+    )["criteria"]["ORG-COMMUNITY-HEALTH"]
+    assert empty_result["status"] == "fail", empty_result["evidence"]
+    assert empty_result["evidence"] == "empty files: README.md"
+
+    filled_result = module.evaluate_repo(
+        module.load_standard(standard), "ActiveInferenceInstitute/example", filled
+    )["criteria"]["ORG-COMMUNITY-HEALTH"]
+    assert filled_result["status"] == "pass", filled_result["evidence"]
+
+    shipped = module.load_standard(SHIPPED_STANDARD).criteria_by_id["ORG-COMMUNITY-HEALTH"]
+    assert shipped.spec.get("match") == "all"
+    assert shipped.spec.get("non_empty") is True
+
+
 def test_file_contains_reports_relative_path_and_line(tmp_path: Path) -> None:
     standard = _write_standard(
         tmp_path,
@@ -196,6 +244,68 @@ def test_file_contains_reports_relative_path_and_line(tmp_path: Path) -> None:
     assert criterion["status"] == "pass"
     assert criterion["evidence"] == "README.md:3"
     assert str(tmp_path) not in criterion["evidence"]
+
+
+def test_file_contains_match_all_reports_path_and_line(tmp_path: Path) -> None:
+    """The ``match: all`` pass keeps the documented ``path:line`` evidence."""
+    standard = _write_standard(
+        tmp_path,
+        [
+            _criterion(
+                "CORE-COMMANDS",
+                "file-contains",
+                match="all",
+                paths=["docs/*.md"],
+                all_of=["pytest"],
+            )
+        ],
+    )
+    repo = _make_repo(
+        tmp_path,
+        {"docs/a.md": "# A\n\nRun with pytest.\n", "docs/b.md": "pytest\n"},
+    )
+    result = _run_cli(*_repo_args(repo, standard, "--json"))
+    assert result.returncode == 0, result.stderr
+    criterion = json.loads(result.stdout)["repos"]["ActiveInferenceInstitute/example"]["criteria"][
+        "CORE-COMMANDS"
+    ]
+    assert criterion["status"] == "pass"
+    assert criterion["evidence"] == "docs/a.md:3"
+    assert str(tmp_path) not in criterion["evidence"]
+
+
+def test_file_contains_absent_path_is_fail_and_waivable(tmp_path: Path) -> None:
+    """An absent path is a definite ``fail``, never ``unavailable``.
+
+    ``standards/README.md`` documents this, and the waiver path depends on it: a
+    waiver only converts ``fail`` to ``waived``. Reporting ``unavailable`` would
+    make an absent file permanently unwaivable.
+    """
+    standard = _write_standard(
+        tmp_path,
+        [_criterion("CORE-READINESS", "file-contains", paths=[".aii/readiness.json"], regex="x")],
+    )
+    repo = _make_repo(tmp_path, {".gitignore": "*.pyc\n"})
+    module = _load_checker()
+
+    absent = module.evaluate_repo(
+        module.load_standard(standard), "ActiveInferenceInstitute/example", repo
+    )["criteria"]["CORE-READINESS"]
+    assert absent["status"] == "fail", absent["evidence"]
+
+    _write_manifest(
+        repo,
+        {
+            "schema": "aii-readiness/v1",
+            "tier": "core",
+            "waivers": [{"criterion": "CORE-READINESS", "reason": "not adopted yet"}],
+        },
+    )
+    waived = module.evaluate_repo(
+        module.load_standard(standard), "ActiveInferenceInstitute/example", repo
+    )["criteria"]["CORE-READINESS"]
+    assert waived["status"] == "waived", waived["evidence"]
+    assert "not adopted yet" in waived["evidence"]
 
 
 def test_file_contains_forbid_rejects_forbidden_pattern(tmp_path: Path) -> None:
@@ -564,6 +674,49 @@ def test_dependabot_ecosystem_single_lockfile_repository(tmp_path: Path) -> None
     assert _ecosystem_status(standard, uv_only)["status"] == "pass"
 
 
+def test_dependabot_ecosystem_reads_lockfiles_from_the_tracked_index(tmp_path: Path) -> None:
+    """A gitignored lockfile on disk is not a lockfile GitHub can see.
+
+    Presence follows the same tracked-index rule as every other kind. ``pymdp``
+    keeps an untracked ``uv.lock`` on disk; it must never be cited as watched,
+    and a repository with no tracked lockfile fails with that fact stated.
+    """
+    standard = _ecosystem_standard(tmp_path, PYTHON_LOCKS, PYTHON_PRECEDENCE)
+
+    legacy = _make_repo(
+        tmp_path,
+        {
+            ".gitignore": "uv.lock\n",
+            "uv.lock": "version = 1\n",
+            "requirements.txt": "numpy\n",
+            ".github/dependabot.yml": _dependabot("pip"),
+        },
+        "legacy",
+    )
+    ignored_only = _make_repo(
+        tmp_path,
+        {
+            ".gitignore": "uv.lock\n",
+            "uv.lock": "version = 1\n",
+            ".github/dependabot.yml": _dependabot("uv"),
+        },
+        "ignored",
+    )
+    for repo in (legacy, ignored_only):
+        _git(repo, "init", "-q")
+        _git(repo, "add", ".")
+
+    selected = _ecosystem_status(standard, legacy)
+    assert selected["status"] == "pass", selected["evidence"]
+    assert "requirements.txt is watched as pip" in selected["evidence"]
+    assert "uv.lock is watched" not in selected["evidence"]
+
+    absent = _ecosystem_status(standard, ignored_only)
+    assert absent["status"] == "fail", absent["evidence"]
+    assert "no tracked lock file matches a known ecosystem" in absent["evidence"]
+    assert "untracked on disk: uv.lock" in absent["evidence"]
+
+
 @pytest.mark.parametrize(
     "order",
     [
@@ -808,13 +961,22 @@ def test_report_mode_exits_zero_and_still_records_failures(tmp_path: Path) -> No
 
 
 def test_exit_code_two_on_usage_error(tmp_path: Path) -> None:
-    standard = _write_standard(tmp_path, [])
+    """Usage errors reach argparse (missing path) or argument validation (absent path).
+
+    The standard is valid on purpose: an empty catalogue would fail early in
+    ``load_standard`` and never exercise the argument handling these cases own.
+    """
+    standard = _write_standard(
+        tmp_path, [_criterion("CORE-README", "file-exists", paths=["README.md"])]
+    )
     repo = _make_repo(tmp_path, {"README.md": "hello\n"})
+    assert repo.is_dir()
 
     missing_path = _run_cli(
         "--repo", "ActiveInferenceInstitute/example", "--standard", standard, "--check"
     )
     assert missing_path.returncode == 2, missing_path.stderr
+    assert "--path" in missing_path.stderr
 
     nonexistent = _run_cli(
         "--repo",
@@ -826,11 +988,10 @@ def test_exit_code_two_on_usage_error(tmp_path: Path) -> None:
         "--check",
     )
     assert nonexistent.returncode == 2, nonexistent.stderr
+    assert "repository path not found" in nonexistent.stderr
 
     nothing_selected = _run_cli("--standard", standard)
     assert nothing_selected.returncode == 2
-
-    del repo
 
 
 def test_unknown_kind_is_a_hard_error_not_a_skip(tmp_path: Path) -> None:
@@ -1013,15 +1174,6 @@ def test_manifest_tier_is_reported_and_used(tmp_path: Path) -> None:
     assert report["criteria"]["PY-UVLOCK"]["status"] == "pass"
 
 
-def _git(repo: Path, *args: str) -> None:
-    subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-
 def test_classification_uses_tracked_files(tmp_path: Path) -> None:
     module = _load_checker()
     python_repo = _make_repo(
@@ -1158,7 +1310,9 @@ def test_shipped_org_tier_excludes_core_ci_on_and_only_there() -> None:
     org_exclusions = standard.exclusions("org")
     assert "CORE-CI-ON" in org_exclusions
     assert org_exclusions["CORE-CI-ON"].strip()
-    for other_tier in ("core", "python-library", "static-html"):
+    other_tiers = [tier for tier in standard.tiers if tier != "org"]
+    assert other_tiers, "the shipped catalogue must declare tiers besides org"
+    for other_tier in other_tiers:
         assert "CORE-CI-ON" not in standard.exclusions(other_tier), other_tier
 
 

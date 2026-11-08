@@ -16,18 +16,23 @@
 #             "test (3.13)"                          (Symposium)
 #             "validate (3.11)" with test-job-name: validate   (AEOS)
 #             "quality (3.12)"  with test-job-name: quality    (Biofirm)
-#             "validate"        with test-job-name: validate  (ActiveInferenceJournal,
-#                                                              Active_Inference_Ontology)
 #
-# Not reproduced by this workflow, reported in the foundation handoff because a
-# job that has a matrix always reports a suffixed name:
+# This workflow cannot produce a bare "validate". A matrix test job always
+# reports its leg suffix, so `test-job-name: validate` yields "validate (3.12)".
+# The bare "validate" context (ActiveInferenceJournal, Active_Inference_Ontology)
+# is reproduced by html-ci's static validate job instead.
+#
+# Not reproduced by this workflow: nine required contexts whose shape needs a
+# bare or differently prefixed job name, a different matrix label, or a
+# two-legged matrix. Those repositories keep their own job until an adoption
+# feature proves a template for the shape:
 #   "test" (Journal_Utilities), "tests" (GEN24), "test (py3.12)"
 #   (ActiveBlockference, needs a `py` prefix), "probes (ubuntu-latest, 3.15)"
 #   (GEO_INFER, two-legged runner+version matrix), "test suite (python 3.12,
 #   frozen lock)" (pymcp), "Fast source checks" (Active_Fedference),
-#   "Pipeline gates, lint, and Lean budget" (policy_entanglement), and
-#   "repo-gates" (Generalized_Notation_Notation). Those repositories keep their
-#   own job until an adoption feature proves a template for its shape.
+#   "Pipeline gates, lint, and Lean budget" (policy_entanglement),
+#   "repo-gates" (Generalized_Notation_Notation), and "VFE regression tests"
+#   (Parr_et_al_2022_ActInf_Textbook).
 name: python-ci (reusable)
 
 on:
