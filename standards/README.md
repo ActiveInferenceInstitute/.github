@@ -33,6 +33,24 @@ is a configuration error (exit 2), never a silent skip.
 A `command` criterion runs the specific gate the criterion names. It never runs
 a repository's whole test suite.
 
+### Lockfile precedence (`CORE-DEPENDABOT-ECOSYSTEM`)
+
+The dependabot criterion must measure the lockfile a repository *actually* uses,
+so the catalogue declares lockfile **precedence groups**, most authoritative
+first:
+
+1. package-manager lockfiles — `uv.lock`, `poetry.lock`, `Pipfile.lock`,
+   `pdm.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`,
+   `bun.lockb`, `Cargo.lock`, `go.sum`, `Manifest.toml`;
+2. legacy `requirements.txt`.
+
+The first group holding a present lockfile is the repository's real ecosystem,
+and **every** lockfile present in it must be watched. Lower groups are ignored as
+legacy while a higher group is present. Selection never depends on alphabetical
+or declaration order: `requirements.txt` + `uv.lock` requires `uv`, and
+`package-lock.json` + `uv.lock` requires both `npm` and `uv`. A repository whose
+real lockfile ecosystem is unwatched still fails the criterion.
+
 ## The five statuses
 
 Every criterion resolves to exactly one of:

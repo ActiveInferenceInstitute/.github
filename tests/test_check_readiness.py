@@ -443,6 +443,182 @@ def test_yaml_path_dependabot_ecosystem(tmp_path: Path) -> None:
     )
 
 
+DEPENDABOT_HEADER = "version: 2\nupdates:\n"
+
+
+def _dependabot(*ecosystems: str) -> str:
+    return DEPENDABOT_HEADER + "".join(
+        f"  - package-ecosystem: {ecosystem}\n    directory: /\n" for ecosystem in ecosystems
+    )
+
+
+def _ecosystem_standard(
+    tmp_path: Path,
+    ecosystems: dict[str, str],
+    precedence: list[list[str]] | None = None,
+    *,
+    name: str = "tiers.yaml",
+) -> Path:
+    spec: dict[str, Any] = {
+        "files": [".github/dependabot.yml"],
+        "ecosystems": ecosystems,
+    }
+    if precedence is not None:
+        spec["precedence"] = precedence
+    return _write_standard(
+        tmp_path,
+        [_criterion("CORE-DEPENDABOT-ECOSYSTEM", "yaml-path", **spec)],
+        name=name,
+    )
+
+
+def _ecosystem_status(standard: Path, repo: Path) -> dict[str, str]:
+    module = _load_checker()
+    report = module.evaluate_repo(module.load_standard(standard), "A/R", repo)
+    return report["criteria"]["CORE-DEPENDABOT-ECOSYSTEM"]
+
+
+PYTHON_LOCKS = {"uv.lock": "uv", "requirements.txt": "pip"}
+PYTHON_PRECEDENCE = [["uv.lock"], ["requirements.txt"]]
+
+
+def test_dependabot_ecosystem_prefers_package_manager_lockfile_over_requirements(
+    tmp_path: Path,
+) -> None:
+    """requirements.txt is legacy: uv.lock decides when both are present."""
+    standard = _ecosystem_standard(tmp_path, PYTHON_LOCKS, PYTHON_PRECEDENCE)
+    files = {
+        "uv.lock": "version = 1\n",
+        "requirements.txt": "# generated from pyproject.toml; uv.lock is authoritative\n",
+    }
+    uv_watched = _make_repo(
+        tmp_path, {**files, ".github/dependabot.yml": _dependabot("github-actions", "uv")}, "uv"
+    )
+    pip_only = _make_repo(
+        tmp_path, {**files, ".github/dependabot.yml": _dependabot("github-actions", "pip")}, "pip"
+    )
+
+    watched = _ecosystem_status(standard, uv_watched)
+    assert watched["status"] == "pass", watched["evidence"]
+    assert "uv.lock is watched as uv" in watched["evidence"]
+    assert "requirements.txt" in watched["evidence"]
+
+    unwatched = _ecosystem_status(standard, pip_only)
+    assert unwatched["status"] == "fail", unwatched["evidence"]
+    assert "uv.lock needs ecosystem uv" in unwatched["evidence"]
+
+
+def test_dependabot_ecosystem_requires_every_real_lockfile(tmp_path: Path) -> None:
+    """package-lock.json and uv.lock are both real; npm-only must not pass."""
+    ecosystems = {"uv.lock": "uv", "package-lock.json": "npm"}
+    standard = _ecosystem_standard(
+        tmp_path,
+        ecosystems,
+        [["uv.lock", "package-lock.json"]],
+    )
+    files = {"uv.lock": "version = 1\n", "package-lock.json": "{}\n"}
+    npm_only = _make_repo(
+        tmp_path, {**files, ".github/dependabot.yml": _dependabot("npm")}, "npm-only"
+    )
+    both = _make_repo(
+        tmp_path, {**files, ".github/dependabot.yml": _dependabot("uv", "npm")}, "both"
+    )
+
+    unwatched = _ecosystem_status(standard, npm_only)
+    assert unwatched["status"] == "fail", unwatched["evidence"]
+    assert "uv.lock needs ecosystem uv" in unwatched["evidence"]
+
+    watched = _ecosystem_status(standard, both)
+    assert watched["status"] == "pass", watched["evidence"]
+    assert "package-lock.json is watched as npm" in watched["evidence"]
+    assert "uv.lock is watched as uv" in watched["evidence"]
+
+
+def test_dependabot_ecosystem_single_lockfile_repository(tmp_path: Path) -> None:
+    """A repository with one lockfile still requires exactly that ecosystem."""
+    standard = _ecosystem_standard(tmp_path, PYTHON_LOCKS, PYTHON_PRECEDENCE)
+    requirements_only = _make_repo(
+        tmp_path,
+        {
+            "requirements.txt": "numpy\n",
+            ".github/dependabot.yml": _dependabot("pip"),
+        },
+        "requirements",
+    )
+    dropped = _make_repo(
+        tmp_path,
+        {
+            "requirements.txt": "numpy\n",
+            ".github/dependabot.yml": _dependabot("uv"),
+        },
+        "requirements-uv",
+    )
+    uv_only = _make_repo(
+        tmp_path,
+        {"uv.lock": "version = 1\n", ".github/dependabot.yml": _dependabot("uv")},
+        "uv",
+    )
+
+    assert _ecosystem_status(standard, requirements_only)["status"] == "pass"
+    assert _ecosystem_status(standard, dropped)["status"] == "fail"
+    assert _ecosystem_status(standard, uv_only)["status"] == "pass"
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        ("uv.lock", "requirements.txt"),
+        ("requirements.txt", "uv.lock"),
+    ],
+)
+def test_dependabot_ecosystem_never_selects_by_sort_or_declaration_order(
+    tmp_path: Path, order: tuple[str, str]
+) -> None:
+    """Selection follows precedence, so neither alphabetical nor file order decides."""
+    ecosystems = {lockfile: PYTHON_LOCKS[lockfile] for lockfile in order}
+    standard = _ecosystem_standard(tmp_path, ecosystems, PYTHON_PRECEDENCE)
+    repo = _make_repo(
+        tmp_path,
+        {
+            "uv.lock": "version = 1\n",
+            "requirements.txt": "# legacy\n",
+            ".github/dependabot.yml": _dependabot("pip"),
+        },
+        "repo-" + "-".join(order),
+    )
+
+    result = _ecosystem_status(standard, repo)
+    assert result["status"] == "fail", (order, result["evidence"])
+    assert "uv.lock needs ecosystem uv" in result["evidence"]
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"ecosystems": PYTHON_LOCKS, "precedence": [["uv.lock"], ["unknown.lock"]]},
+        {"ecosystems": PYTHON_LOCKS, "precedence": [["uv.lock"]]},
+        {"ecosystems": PYTHON_LOCKS, "precedence": [["uv.lock"], ["uv.lock", "requirements.txt"]]},
+        {"ecosystems": PYTHON_LOCKS, "precedence": []},
+        {"ecosystems": PYTHON_LOCKS, "precedence": [["uv.lock"], ["requirements.txt"], []]},
+        {"ecosystems": {"uv.lock": ""}, "precedence": None},
+    ],
+)
+def test_dependabot_ecosystem_precedence_is_validated(tmp_path: Path, spec: dict[str, Any]) -> None:
+    """A precedence that does not cover the declared lockfiles exactly is exit 2."""
+    criterion_spec = {key: value for key, value in spec.items() if value is not None}
+    standard = _write_standard(
+        tmp_path,
+        [
+            _criterion(
+                "CORE-DEPENDABOT-ECOSYSTEM", "yaml-path", files=["dependabot.yml"], **criterion_spec
+            )
+        ],
+    )
+    module = _load_checker()
+    with pytest.raises(module.ConfigError):
+        module.load_standard(standard)
+
+
 def test_command_pass_fail_and_missing_tool(tmp_path: Path) -> None:
     standard = _write_standard(
         tmp_path,
@@ -1051,6 +1227,30 @@ def test_shipped_standard_contains_the_catalogue_ids() -> None:
         "ORG-STANDARD-README",
     }
     assert required <= identifiers
+
+
+def test_shipped_catalogue_documents_lockfile_precedence() -> None:
+    """The catalogue, not Python, states that legacy requirements.txt ranks last."""
+    module = _load_checker()
+    standard = module.load_standard(SHIPPED_STANDARD)
+    spec = standard.criteria_by_id["CORE-DEPENDABOT-ECOSYSTEM"].spec
+    ecosystems = spec["ecosystems"]
+    precedence = spec["precedence"]
+
+    flattened = [lockfile for group in precedence for lockfile in group]
+    assert sorted(flattened) == sorted(ecosystems), "precedence must cover every lockfile once"
+    assert precedence[-1] == ["requirements.txt"], precedence[-1]
+    package_manager_group = set(precedence[0])
+    assert {
+        "uv.lock",
+        "poetry.lock",
+        "Pipfile.lock",
+        "package-lock.json",
+        "bun.lock",
+        "pnpm-lock.yaml",
+        "yarn.lock",
+        "Manifest.toml",
+    } <= package_manager_group
 
 
 def test_shipped_standard_waiverless_unavailable_never_passes(tmp_path: Path) -> None:

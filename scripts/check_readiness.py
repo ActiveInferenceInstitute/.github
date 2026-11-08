@@ -381,6 +381,8 @@ def _validate_spec(criterion_id: str, kind: str, spec: dict[str, Any]) -> None:
             raise ConfigError(f"{criterion_id}: yaml-path needs file or files")
         if not any(key in spec for key in ("require", "expect", "ecosystems")):
             raise ConfigError(f"{criterion_id}: yaml-path needs require, expect or ecosystems")
+        if "ecosystems" in spec:
+            _lockfile_groups(criterion_id, spec)
     elif kind == "command":
         if "command" not in spec:
             raise ConfigError(f"{criterion_id}: command needs a command")
@@ -898,7 +900,7 @@ def evaluate_yaml_path(criterion: Criterion, context: EvalContext) -> RunResult:
             results.append((path, RunResult("unavailable", "document does not parse")))
             continue
         document = _normalize_yaml_keys(document)
-        results.append((path, _requires(document, spec, context)))
+        results.append((path, _requires(document, spec, context, criterion.id)))
     if match_all:
         for path, result in results:
             if result.status != "pass":
@@ -922,17 +924,73 @@ def evaluate_yaml_path(criterion: Criterion, context: EvalContext) -> RunResult:
     return RunResult("fail", f"{_relative(path, context.repo_path)}: {result.evidence}")
 
 
-def _requires(document: Any, spec: dict[str, Any], context: EvalContext) -> RunResult:
+def _lockfile_groups(criterion_id: str, spec: dict[str, Any]) -> list[list[str]]:
+    """Resolve the lockfile precedence groups a criterion declares.
+
+    Groups are ordered from most authoritative to most legacy. The first group
+    holding any present lockfile is the repository's real ecosystem: every
+    lockfile in it must be watched, and lower groups are ignored as legacy. When
+    a spec declares no ``precedence``, all declared lockfiles form one group, so
+    selection never depends on declaration or alphabetical order.
+    """
+    ecosystems = spec.get("ecosystems")
+    if not isinstance(ecosystems, dict) or not ecosystems:
+        raise ConfigError(f"{criterion_id}: ecosystems must be a non-empty mapping")
+    for lockfile, ecosystem in ecosystems.items():
+        if not isinstance(lockfile, str) or not lockfile:
+            raise ConfigError(f"{criterion_id}: lockfile names must be non-empty strings")
+        if not isinstance(ecosystem, str) or not ecosystem:
+            raise ConfigError(
+                f"{criterion_id}: ecosystem for {lockfile} must be a non-empty string"
+            )
+    raw_groups = spec.get("precedence")
+    if raw_groups is None:
+        return [sorted(ecosystems)]
+    if not isinstance(raw_groups, list) or not raw_groups:
+        raise ConfigError(f"{criterion_id}: precedence must be a non-empty list of lockfile groups")
+    groups: list[list[str]] = []
+    seen: set[str] = set()
+    for index, raw_group in enumerate(raw_groups):
+        names = _as_string_list(raw_group, f"{criterion_id}: precedence[{index}]")
+        if not names:
+            raise ConfigError(
+                f"{criterion_id}: precedence[{index}] must name at least one lockfile"
+            )
+        for name in names:
+            if name not in ecosystems:
+                raise ConfigError(f"{criterion_id}: precedence names unknown lockfile {name!r}")
+            if name in seen:
+                raise ConfigError(
+                    f"{criterion_id}: lockfile {name!r} appears in more than one precedence group"
+                )
+            seen.add(name)
+        groups.append(names)
+    omitted = sorted(set(ecosystems) - seen)
+    if omitted:
+        raise ConfigError(
+            f"{criterion_id}: precedence omits declared lockfile(s): " + ", ".join(omitted)
+        )
+    return groups
+
+
+def _requires(
+    document: Any, spec: dict[str, Any], context: EvalContext, criterion_id: str
+) -> RunResult:
     ecosystems = spec.get("ecosystems")
     if isinstance(ecosystems, dict):
-        expected = None
-        lockfile = None
-        for name in sorted(ecosystems):
-            if (context.repo_path / name).is_file():
-                expected = str(ecosystems[name])
-                lockfile = name
+        groups = _lockfile_groups(criterion_id, spec)
+        selected: list[str] = []
+        lower: list[str] = []
+        for index, group in enumerate(groups):
+            present = [name for name in group if (context.repo_path / name).is_file()]
+            if present:
+                selected = present
+                for legacy_group in groups[index + 1 :]:
+                    lower.extend(
+                        name for name in legacy_group if (context.repo_path / name).is_file()
+                    )
                 break
-        if expected is None:
+        if not selected:
             return RunResult("fail", "no lock file matches a known ecosystem")
         updates: list[Any] = []
         if isinstance(document, dict) and isinstance(document.get("updates"), list):
@@ -942,13 +1000,21 @@ def _requires(document: Any, spec: dict[str, Any], context: EvalContext) -> RunR
             for update in updates
             if isinstance(update, dict) and update.get("package-ecosystem") is not None
         }
-        if expected in found:
-            return RunResult("pass", f"{lockfile} is watched as {expected}")
-        return RunResult(
-            "fail",
-            f"{lockfile} needs ecosystem {expected}; dependabot declares "
-            + (", ".join(sorted(found)) or "nothing"),
+        missing = sorted(name for name in selected if str(ecosystems[name]) not in found)
+        if missing:
+            return RunResult(
+                "fail",
+                "; ".join(f"{name} needs ecosystem {ecosystems[name]}" for name in missing)
+                + "; dependabot declares "
+                + (", ".join(sorted(found)) or "nothing"),
+            )
+        evidence = "; ".join(
+            f"{name} is watched as {ecosystems[name]}" for name in sorted(selected)
         )
+        if lower:
+            # Lower-precedence lockfiles are legacy once a real lockfile is present.
+            evidence += "; ignored lower-precedence: " + ", ".join(sorted(lower))
+        return RunResult("pass", evidence)
 
     requires = _as_string_list(spec.get("require"), "require")
     for dotted in requires:
