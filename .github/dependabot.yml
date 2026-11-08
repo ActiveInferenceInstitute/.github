@@ -1,0 +1,29 @@
+# Dependabot for the standard repository itself.
+#
+# uv.lock is this repository's tracked Python lockfile, so Dependabot must watch
+# the uv ecosystem (CORE-DEPENDABOT-ECOSYSTEM); the actions pinned in
+# .github/workflows are watched through github-actions. Every update block
+# declares a cooldown so a release is not adopted on the day it is published.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
