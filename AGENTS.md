@@ -29,6 +29,8 @@ Two properties hold everywhere in this repository:
 | `.github/actions/setup-python-uv/` | the composite action that installs uv and a pinned Python |
 | `.github/dependabot.yml` | watches `uv.lock` (uv) and the pinned workflow actions |
 | `.aii/readiness.json` | this repository's declared tier, baseline commit and waivers |
+| `docs/` | the modular documentation: standard, checker, ledger, workflows, testing |
+| `TODO.md` | known gaps, unverified behaviour and owner decisions |
 
 ## Toolchain
 
