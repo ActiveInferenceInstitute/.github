@@ -75,4 +75,6 @@ Waiver expiry is decided from `--today`, so a pinned date makes an old report re
   [`ledger.md`](ledger.md).
 - `scripts/check_ledger_boundary.py` proves a ledger names no private repository.
 
-Both are invoked from `.github/workflows/readiness.yml`; see [`workflows.md`](workflows.md).
+Neither ledger script runs in CI: the reusable `readiness.yml` workflow only calls
+`check_readiness.py` with `--check`. The ledger is rebuilt by the owner from a fleet report and the
+scope table; see [`ledger.md`](ledger.md) and [`workflows.md`](workflows.md).
