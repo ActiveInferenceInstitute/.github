@@ -10,12 +10,27 @@ own `.aii/readiness.json`.
 |---|---|
 | `standards/tiers.yaml` | the criterion catalogue as **data** — tiers, criteria, `kind`, `blocking`, tier applicability, tier exclusions |
 | `standards/README.md` | this document: the human contract |
+| `standards/public-ledger.json` | the published ledger: the 45 public repositories in full, private repositories as counts only |
 | `scripts/check_readiness.py` | the deterministic checker implementing the five evaluation kinds |
+| `scripts/build_public_ledger.py` | builds the ledger from a fleet report and the scope table, refusing any private name |
+| `scripts/check_ledger_boundary.py` | the `boundary` command: refuses a private name, quoted or not, before the ledger is published |
 | `tests/test_check_readiness.py` | the checker's unit tests, including determinism, exit codes and `unavailable != pass` |
+| `tests/test_public_ledger.py` | the ledger builder's and boundary command's unit tests |
 
 Adding a criterion edits `standards/tiers.yaml`; it never requires editing
 Python. That property is what keeps 65 repositories reviewable by someone who
 does not read the checker.
+
+## Standard versions
+
+The catalogue carries its own `schema` and `version`. The version moves when a
+criterion's measurement changes, and the published ledger records the version it
+was built from.
+
+| Version | Change |
+|---|---|
+| `1.1.0` | `CORE-CI-CONCURRENCY` no longer expects `cancel-in-progress: true`; it requires an explicit decision (see below). `CORE-CI-TIMEOUT`'s reusable-workflow limitation is documented. |
+| `1.0.0` | First published catalogue: 87 criteria over nine tiers, evaluated by the five fixed kinds. |
 
 ## The five evaluation kinds
 
@@ -83,14 +98,18 @@ enforced by the checker's tests.
 
 | Code | Meaning |
 |---|---|
-| `0` | every blocking criterion passed, was waived or was not applicable |
+| `0` | every criterion passed, was waived or was not applicable |
 | `1` | at least one blocking criterion failed |
 | `2` | usage, catalogue or manifest error |
-| `3` | at least one blocking criterion was unevaluable (`unavailable`) |
+| `3` | at least one criterion was unevaluable (`unavailable`) |
 
-`3` outranks `1`. Because the three `CORE-INHERIT-*` criteria are `github-api`,
-an offline `--check` returns `3` by design; pass `--github` with a pinned token
-when a `0`/`1` answer is required.
+`3` outranks `1`. `--check` certifies that the standard was **measured** as well
+as met, so an unevaluable criterion leaves the run uncertifiable whether or not
+it is blocking: `blocking` decides whether a definite *failure* is fatal, never
+whether an unmeasurable criterion can be certified. The three `CORE-INHERIT-*`
+criteria are `github-api` and enter non-blocking under the ratchet, so an offline
+`--check` returns `3` by design; pass `--github` with a pinned token when a `0`/`1`
+answer is required.
 
 ## Tiers
 
@@ -157,6 +176,28 @@ repository that has not yet adopted the standard, which the ratchet forbids. If
 branch targeting matters, it becomes a separate non-blocking criterion and is
 promoted only after its tranche is green. The criterion's title describes the
 intended state; the measurement is trigger presence.
+
+### `CORE-CI-CONCURRENCY` asks for a decision, not a value
+
+The criterion requires every workflow to declare `concurrency` and to state
+`cancel-in-progress` explicitly. Catalogue 1.0.0 additionally demanded the value
+`true`, which is wrong for the workflows that publish: cancelling a wheel upload,
+a nightly publication branch or a reviewed Pages deployment mid-flight destroys
+the artifact the run exists to produce. Those workflows declare `false` and say
+so. Either value satisfies the criterion, because the value is the workflow
+owner's decision and the failure it measures is silence — a workflow that
+inherits whatever GitHub's default happens to be for its trigger.
+
+### Known limitation: a reusable-workflow call job cannot declare `timeout-minutes`
+
+`CORE-CI-TIMEOUT` requires every job to declare `timeout-minutes`. A job that
+calls a reusable workflow (`uses:` at job level) accepts only `name`, `uses`,
+`with`, `secrets`, `needs`, `if` and `permissions`; `actionlint` rejects the key
+there, and the bound belongs to the called workflow. Where a checked workflow
+contains such a job, the criterion keeps reporting a failure that cannot be fixed
+inside the repository. The adopting repository adds `timeout-minutes` to the
+reusable workflow it calls; `ActiveInferenceJournal` and `GEO_INFER` measure this
+way today.
 
 ## The ratchet
 

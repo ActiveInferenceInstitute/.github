@@ -1,0 +1,88 @@
+# AII sidecar — InstituteOS metadata. Schema: aii_platform.aii_sidecar
+meta:
+  sidecar_version: 1.2.1
+  updated: '2026-11-10'
+repo:
+  name: .github
+  slug: .github
+  full_name: ActiveInferenceInstitute/.github
+  description: 'Organization-wide defaults for the Active Inference Institute on GitHub:
+    the public profile, community health files, and issue and pull-request templates.'
+institute:
+  category: organization
+  maturity: stable
+  steward: Active Inference Institute
+ecosystem:
+  relations:
+  - repo: ActiveInferenceInstitute/InstituteOS
+    relation: referenced-by
+    note: Federated via the InstituteOS .aii manifest.
+  links:
+    website: https://www.activeinference.org
+    github: https://github.com/ActiveInferenceInstitute/.github
+artifacts:
+- path: README.md
+  kind: doc
+  description: Repository overview.
+- path: pyproject.toml
+  kind: code
+  description: Python package config.
+- path: LICENSE
+  kind: doc
+  description: License.
+- path: profile/README.md
+  kind: doc
+  description: Repository artifact.
+- path: AGENTS.md
+  kind: doc
+  description: Repository artifact.
+- path: CONTRIBUTING.md
+  kind: doc
+  description: Repository artifact.
+- path: CODE_OF_CONDUCT.md
+  kind: doc
+  description: Repository artifact.
+- path: SECURITY.md
+  kind: doc
+  description: Repository artifact.
+- path: SUPPORT.md
+  kind: doc
+  description: Repository artifact.
+- path: PULL_REQUEST_TEMPLATE.md
+  kind: doc
+  description: Repository artifact.
+- path: tests
+  kind: test
+  description: Test suite.
+provenance:
+  license: MIT
+  citation:
+    text: Active Inference Institute — .github.
+instituteos:
+  tags:
+  - organization
+  - community-health
+  - github-profile
+  - templates
+capabilities:
+- python-package
+- tested
+- community-health
+- org-profile
+- templates
+- documentation
+- ci
+tasks:
+  test:
+    cmd: python -m pytest
+    description: Run the test suite.
+  inventory:
+    cmd: git ls-files
+    description: List tracked organization files.
+docs:
+- README.md
+- AGENTS.md
+- docs/INTEGRATION.md
+- docs/README.md
+- docs/AGENTS.md
+schema: aii-sidecar/v1

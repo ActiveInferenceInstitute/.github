@@ -20,7 +20,11 @@ Two properties hold everywhere in this repository:
 | `standards/tiers.yaml` | the tier and criterion catalogue as data |
 | `standards/README.md` | the human contract: kinds, statuses, exit codes, tiers, exclusions, waivers |
 | `scripts/check_readiness.py` | the checker: CLI, evaluation and deterministic JSON |
+| `scripts/build_public_ledger.py` | builds `standards/public-ledger.json` from a fleet report and the scope table |
+| `scripts/check_ledger_boundary.py` | the boundary command: proves the published ledger names no private repository |
+| `standards/public-ledger.json` | the published ledger: 45 public repositories in full, private repositories as counts only |
 | `tests/test_check_readiness.py` | checker tests (determinism, exit codes, `unavailable != pass`) |
+| `tests/test_public_ledger.py` | ledger and boundary tests (`OWNER/REPO` ids, unquoted names, exit 2 on bad input) |
 | `.github/workflows/` | `on: workflow_call`-only reusable workflows, unreferenced until a repository adopts one |
 | `.github/actions/setup-python-uv/` | the composite action that installs uv and a pinned Python |
 | `.github/dependabot.yml` | watches `uv.lock` (uv) and the pinned workflow actions |

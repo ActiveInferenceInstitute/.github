@@ -8,7 +8,7 @@
 # New criteria enter with blocking: false and ratchet only after their tranche is green.
 
 schema: aii-readiness-standard/v1
-version: "1.0.0"
+version: "1.1.0"
 
 tiers:
   core:
@@ -177,7 +177,7 @@ criteria:
       on_empty: not-applicable
 
   - id: CORE-CI-CONCURRENCY
-    title: Every workflow declares concurrency with cancel-in-progress
+    title: Every workflow declares concurrency with an explicit cancel-in-progress decision
     kind: yaml-path
     blocking: false
     within: [core]
@@ -185,8 +185,6 @@ criteria:
       files: [".github/workflows/*.yml", ".github/workflows/*.yaml"]
       match: all
       require: [concurrency, concurrency.cancel-in-progress]
-      expect:
-        concurrency.cancel-in-progress: true
       on_empty: not-applicable
 
   - id: CORE-DEPENDABOT
@@ -934,6 +932,15 @@ criteria:
     spec:
       paths: [standards/public-ledger.json]
       forbid: "(?i)\"(aii-[a-z]+|InstituteOS|PyDMB|nest-internal|apis-seq|ivm-xyz|GenerativeResearchTeams|VariationalEvolution|Active_Cardference|Active_Inference_Fractal|Active_Trailference|Embodied_Dissociative_Absorption)\""
+
+  - id: ORG-LEDGER-SCHEMA
+    title: The published ledger declares the ledger schema
+    kind: file-contains
+    blocking: false
+    within: [org]
+    spec:
+      paths: [standards/public-ledger.json]
+      regex: '"schema": "aii-readiness-ledger/v1"'
 
   - id: ORG-STANDARD-README
     title: standards/README.md documents the standard

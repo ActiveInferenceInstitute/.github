@@ -947,6 +947,32 @@ def test_exit_code_three_when_blocking_is_unavailable(tmp_path: Path) -> None:
     assert result.returncode == 3, result.stderr
 
 
+def test_exit_code_three_when_a_non_blocking_criterion_is_unavailable(tmp_path: Path) -> None:
+    """``--check`` certifies measurement as well as compliance.
+
+    An unevaluable *non-blocking* criterion still leaves the run uncertifiable
+    (exit 3): ``blocking`` decides whether a definite failure is fatal, never
+    whether an unmeasurable criterion can be certified.  This is why an offline
+    ``--check`` on the org repository returns 3 for its non-blocking
+    ``CORE-INHERIT-*`` github-api criteria.
+    """
+    standard = _write_standard(
+        tmp_path,
+        [
+            _criterion("CORE-README", "file-exists", paths=["README.md"]),
+            _criterion(
+                "CMD-MISSING",
+                "command",
+                command=["definitely-not-an-installed-tool-xyz"],
+                blocking=False,
+            ),
+        ],
+    )
+    repo = _make_repo(tmp_path, {"README.md": "hello\n"})
+    result = _run_cli(*_repo_args(repo, standard, "--check"))
+    assert result.returncode == 3, result.stderr
+
+
 def test_report_mode_exits_zero_and_still_records_failures(tmp_path: Path) -> None:
     standard = _write_standard(
         tmp_path, [_criterion("CORE-README", "file-exists", paths=["README.md"])]
@@ -1378,9 +1404,23 @@ def test_shipped_standard_contains_the_catalogue_ids() -> None:
         "ORG-CHECKER-EXIT-CODES",
         "ORG-REUSABLE-WORKFLOWS",
         "ORG-LEDGER-PUBLIC-ONLY",
+        "ORG-LEDGER-SCHEMA",
         "ORG-STANDARD-README",
     }
     assert required <= identifiers
+
+
+def test_shipped_ledger_schema_criterion_is_non_blocking() -> None:
+    """A new criterion enters with ``blocking: false`` and ratchets only after
+    its tranche is green (standards/README.md, "The ratchet").  The ledger's
+    shape is guarded by exactly that kind of criterion."""
+    module = _load_checker()
+    standard = module.load_standard(SHIPPED_STANDARD)
+    criterion = standard.criteria_by_id["ORG-LEDGER-SCHEMA"]
+
+    assert criterion.blocking is False
+    assert criterion.spec["paths"] == ["standards/public-ledger.json"]
+    assert criterion.within == ("org",)
 
 
 def test_shipped_catalogue_documents_lockfile_precedence() -> None:
