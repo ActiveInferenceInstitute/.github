@@ -26,12 +26,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 BUILDER = SCRIPTS / "build_public_ledger.py"
 BOUNDARY = SCRIPTS / "check_ledger_boundary.py"
 SHIPPED_STANDARD = ROOT / "standards" / "tiers.yaml"
+SHIPPED_LEDGER = ROOT / "standards" / "public-ledger.json"
 
 sys.path.insert(0, str(SCRIPTS))
 import build_public_ledger as builder  # noqa: E402
@@ -250,6 +252,35 @@ def test_boundary_command_reports_bad_input_as_exit_2(tmp_path: Path) -> None:
     )
     assert no_criterion.returncode == 2
     assert "is not in the catalogue" in no_criterion.stderr
+
+
+def test_shipped_ledger_matches_the_documented_shape() -> None:
+    """``standards/README.md`` documents the ledger's member set; the shipped file
+    must match it, and must record the catalogue version it was built from."""
+    ledger = json.loads(SHIPPED_LEDGER.read_text(encoding="utf-8"))
+    catalogue = yaml.safe_load(SHIPPED_STANDARD.read_text(encoding="utf-8"))
+
+    assert set(ledger) == {"schema", "standard", "scope", "public", "private"}
+    assert ledger["schema"] == builder.LEDGER_SCHEMA
+    assert ledger["standard"] == {
+        "schema": catalogue["schema"],
+        "version": catalogue["version"],
+    }
+    assert set(ledger["scope"]) == {"total", "public", "private"}
+    assert set(ledger["public"]) == {"count", "repos", "summary"}
+    assert set(ledger["private"]) == {"count", "summary"}
+    assert ledger["public"]["count"] == len(ledger["public"]["repos"])
+    assert ledger["scope"]["public"] + ledger["scope"]["private"] == ledger["scope"]["total"]
+    for repo_id, entry in ledger["public"]["repos"].items():
+        assert set(entry) == {
+            "tier",
+            "tier_source",
+            "commit",
+            "default_branch",
+            "criteria",
+            "summary",
+        }, repo_id
+        assert entry["summary"]["total"] == len(entry["criteria"]), repo_id
 
 
 def test_shipped_forbid_pattern_collides_with_the_public_aii_org_name() -> None:

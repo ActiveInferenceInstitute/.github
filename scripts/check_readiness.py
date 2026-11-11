@@ -51,6 +51,10 @@ DEFAULT_ORG = "ActiveInferenceInstitute"
 DEFAULT_TIMEOUT = 60
 MAX_TEXT_BYTES = 2_000_000
 WORKFLOW_GLOBS = (".github/workflows/*.yml", ".github/workflows/*.yaml")
+MATCH_VALUES = frozenset({"all", "any"})
+ON_EMPTY_VALUES = frozenset({"fail", "pass", "unavailable", "not-applicable"})
+PARSE_VALUES = frozenset({"yaml", "json"})
+ENDPOINT_FIELDS = frozenset({"repo", "org"})
 
 IGNORED_PARTS = frozenset(
     {
@@ -355,7 +359,75 @@ def load_standard(path: Path) -> Standard:
     return standard
 
 
+def _validate_common_spec(criterion_id: str, spec: dict[str, Any]) -> None:
+    """Reject a spec value the evaluators would otherwise silently reinterpret.
+
+    The catalogue is hand-edited data, so a typo is not hypothetical: ``match:
+    All`` would be read as "any", ``on_empty: n/a`` would become ``fail`` and
+    ``parses: Yaml`` would skip the parse check. Each of those changes what the
+    criterion measures without failing it, so the vocabulary is enforced here, at
+    catalogue load time, as exit 2.
+    """
+    match = spec.get("match")
+    if "match" in spec and match not in MATCH_VALUES:
+        raise ConfigError(
+            f"{criterion_id}: match must be one of {', '.join(sorted(MATCH_VALUES))}; got {match!r}"
+        )
+    on_empty = spec.get("on_empty")
+    if "on_empty" in spec and on_empty not in ON_EMPTY_VALUES:
+        raise ConfigError(
+            f"{criterion_id}: on_empty must be one of "
+            f"{', '.join(sorted(ON_EMPTY_VALUES))}; got {on_empty!r}"
+        )
+    parses = spec.get("parses")
+    if "parses" in spec and parses not in PARSE_VALUES:
+        raise ConfigError(
+            f"{criterion_id}: parses must be one of {', '.join(sorted(PARSE_VALUES))}; "
+            f"got {parses!r}"
+        )
+    if "non_empty" in spec and not isinstance(spec["non_empty"], bool):
+        raise ConfigError(f"{criterion_id}: non_empty must be a boolean")
+    if "timeout" in spec:
+        timeout = spec["timeout"]
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0:
+            raise ConfigError(
+                f"{criterion_id}: timeout must be a positive whole number of seconds; "
+                f"got {timeout!r}"
+            )
+
+
+def _validate_command_spec(criterion_id: str, value: Any) -> None:
+    """Reject a command the runner cannot execute without raising."""
+    if isinstance(value, str):
+        if not value.strip():
+            raise ConfigError(f"{criterion_id}: command must not be empty")
+        return
+    if not isinstance(value, list):
+        raise ConfigError(f"{criterion_id}: command must be a string or a list")
+    if not value:
+        raise ConfigError(f"{criterion_id}: command must not be empty")
+    if not all(isinstance(part, str) and part for part in value):
+        raise ConfigError(f"{criterion_id}: command must be a list of non-empty strings")
+
+
+def _validate_endpoints(criterion_id: str, spec: dict[str, Any]) -> None:
+    """Reject a REST path whose placeholders the checker cannot fill."""
+    endpoints = _as_string_list(spec.get("endpoints"), f"{criterion_id}.endpoints")
+    if not endpoints:
+        endpoints = _as_string_list(spec.get("endpoint"), f"{criterion_id}.endpoint")
+    allowed = ", ".join("{" + field + "}" for field in sorted(ENDPOINT_FIELDS))
+    for endpoint in endpoints:
+        try:
+            endpoint.format(repo="owner/repository", org="owner")
+        except (KeyError, IndexError, ValueError) as exc:
+            raise ConfigError(
+                f"{criterion_id}: endpoint {endpoint!r} may only use the "
+                f"{allowed} placeholders: {exc}"
+            ) from exc
+
+
 def _validate_spec(criterion_id: str, kind: str, spec: dict[str, Any]) -> None:
+    _validate_common_spec(criterion_id, spec)
     if kind == "file-exists":
         if not any(key in spec for key in ("path", "paths", "declared_in")):
             raise ConfigError(f"{criterion_id}: file-exists needs path, paths or declared_in")
@@ -386,10 +458,11 @@ def _validate_spec(criterion_id: str, kind: str, spec: dict[str, Any]) -> None:
     elif kind == "command":
         if "command" not in spec:
             raise ConfigError(f"{criterion_id}: command needs a command")
-        if not isinstance(spec["command"], (str, list)):
-            raise ConfigError(f"{criterion_id}: command must be a string or a list")
-    elif kind == "github-api" and "endpoint" not in spec and "endpoints" not in spec:
-        raise ConfigError(f"{criterion_id}: github-api needs endpoint or endpoints")
+        _validate_command_spec(criterion_id, spec["command"])
+    elif kind == "github-api":
+        if "endpoint" not in spec and "endpoints" not in spec:
+            raise ConfigError(f"{criterion_id}: github-api needs endpoint or endpoints")
+        _validate_endpoints(criterion_id, spec)
 
 
 # ---------------------------------------------------------------------------

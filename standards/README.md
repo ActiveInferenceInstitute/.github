@@ -30,7 +30,7 @@ was built from.
 | Version | Change |
 |---|---|
 | `1.1.0` | `CORE-CI-CONCURRENCY` no longer expects `cancel-in-progress: true`; it requires an explicit decision (see below). `CORE-CI-TIMEOUT`'s reusable-workflow limitation is documented. |
-| `1.0.0` | First published catalogue: 87 criteria over nine tiers, evaluated by the five fixed kinds. |
+| `1.0.0` | First published catalogue: 87 criteria over ten tiers, evaluated by the five fixed kinds. |
 
 ## The five evaluation kinds
 
@@ -53,6 +53,46 @@ absent path reported as `unavailable` could never be waived.
 
 A `command` criterion runs the specific gate the criterion names. It never runs
 a repository's whole test suite.
+
+### Spec keys
+
+A criterion's `spec` *is* the measurement, so its keys and its enumerated values
+are part of the contract the checker enforces. An unknown `kind` is already a
+configuration error, and so is a value outside the vocabulary below: `match: All`
+would otherwise be read as "any", `on_empty: n/a` would become `fail`,
+`parses: Yaml` would skip the parse check, and a non-numeric `timeout` would
+raise inside the runner instead of reporting a catalogue error. All of those are
+exit `2`.
+
+| Key | Kind | Meaning |
+|---|---|---|
+| `path` / `paths` | `file-exists`, `file-contains` | one path or glob, or a list of them |
+| `file` / `files` | `yaml-path` | one YAML document or glob, or a list of them |
+| `match` | all | `all` or `any`. `all` requires every declared path, `any` needs one. The default is `any`, except for `yaml-path`, which defaults to `all` |
+| `on_empty` | all | `fail`, `pass`, `unavailable` or `not-applicable`, reported when no declared path matched at all. The default is `fail`, except for `yaml-path`, which defaults to `not-applicable` |
+| `non_empty` | `file-exists` | `true` makes an empty matched file a `fail` |
+| `parses` | `file-exists` | `yaml` or `json`: every matched file must parse |
+| `declared_in` | `file-exists` | a manifest whose license field satisfies the criterion when no declared path matched |
+| `timeout` | `command` | a positive whole number of seconds; a timeout reports `unavailable` |
+| `skip_if_no_paths` | `command` | `not-applicable` when none of the declared paths matched |
+| `require` / `expect` | `yaml-path` | dotted paths that must resolve, or a dotted path and the value it must equal |
+| `ecosystems` / `precedence` | `yaml-path` | the lockfile-to-ecosystem map and its precedence groups |
+| `endpoint` / `endpoints` | `github-api` | REST paths using `{repo}` and `{org}`, and no other placeholder |
+| `regex` / `all_of` / `any_of` | `file-contains` | patterns the document must match |
+| `forbid` | `file-contains` | a pattern the document must not match |
+| `floor_in_ci` / `coverage_threshold_match` / `cname_match` / `node_pin` | `file-contains` | the cross-file rules below |
+
+### The cross-file `file-contains` rules
+
+Four keys compare two files instead of matching one, which is why they are keys
+rather than patterns:
+
+| Key | Criterion | Measurement |
+|---|---|---|
+| `floor_in_ci` | `PY-PYTHON-FLOOR` | the `requires-python` floor in `pyproject.toml` appears in a CI workflow |
+| `coverage_threshold_match` | `PY-COVERAGE-MATCH` | the coverage threshold declared in `pyproject.toml` equals the one CI enforces |
+| `cname_match` | `HTML-CNAME-MATCH` | the host in `CNAME` appears in a CI workflow |
+| `node_pin` | `TS-NODE-PIN` | the Node version pinned by `.nvmrc` or `engines.node` appears in a CI workflow |
 
 ### Lockfile precedence (`CORE-DEPENDABOT-ECOSYSTEM`)
 
@@ -130,7 +170,7 @@ inflated up to 100× by untracked generated trees. The rules are in
 | `julia` | `core` | Julia projects: `Project.toml`, JuliaFormatter, `Pkg.test()` in CI; the Python toolchain is not applied |
 | `notebook` | `core` | Notebook-defined projects: Ruff-clean notebooks, output stripping, and exclusion from type checks and coverage. Declared for future use — no repository currently satisfies the rule |
 | `content-data` | `core` | Content and data repositories: link checks, front-matter checks, and an *inverse* criterion that adding a test framework is a failure |
-| `org` | `core` | the `ActiveInferenceInstitute/.github` repository itself: community-health preservation, CODEOWNERS, FUNDING, the catalogue, checker determinism/tests/exit codes, actionlint-clean reusable workflows, the public-only ledger, and `standards/README.md` |
+| `org` | `core` | the `ActiveInferenceInstitute/.github` repository itself: community-health preservation, CODEOWNERS, FUNDING, the catalogue, checker determinism/tests/exit codes, actionlint-clean workflows, the public-only ledger, and `standards/README.md` |
 
 `ORG-*` criteria apply only to the `org` tier. A criterion never crosses a tier
 boundary by accident: `within` names the tiers that own it.
@@ -199,6 +239,16 @@ inside the repository. The adopting repository adds `timeout-minutes` to the
 reusable workflow it calls; `ActiveInferenceJournal` and `GEO_INFER` measure this
 way today.
 
+### Known limitation: the org tier does not measure the `workflow_call` trigger
+
+`ORG-REUSABLE-WORKFLOWS` runs `actionlint -no-color` over `.github/workflows/`,
+so it measures that every workflow parses and is lint-clean. It does **not**
+measure that each workflow is `on: workflow_call` only. That property is why the
+org repository is exempt from `CORE-CI-ON`, but it is enforced by review
+(`AGENTS.md`, "Conventions") and not by a criterion: a workflow that added a
+`push` trigger would stay lint-clean and pass. Tightening it needs a separate
+criterion, adopted under the ratchet like any other.
+
 ## The ratchet
 
 A new criterion enters with `blocking: false`. It is promoted to
@@ -215,7 +265,10 @@ Each repository declares its tier and waivers in `.aii/readiness.json`:
 ```json
 {
   "schema": "aii-readiness/v1",
+  "repo": "ActiveInferenceInstitute/.github",
   "tier": "python-library",
+  "standard_version": "1.1.0",
+  "default_branch": "main",
   "baseline": { "commit": "<40-hex>", "measured_at": "YYYY-MM-DD" },
   "waivers": [
     { "criterion": "HTML-VALIDATE", "reason": "generated pages; regeneration is the validator",
@@ -223,6 +276,16 @@ Each repository declares its tier and waivers in `.aii/readiness.json`:
   ]
 }
 ```
+
+| Field | Read by the checker | Meaning |
+|---|---|---|
+| `schema` | yes | must be `aii-readiness/v1`; any other value is a configuration error |
+| `repo` | no | the `OWNER/REPO` id, for people and for the sidecar |
+| `tier` | yes | the tier whose criteria apply; an unknown tier is a configuration error, and a declared tier overrides classification |
+| `standard_version` | no | the catalogue revision the manifest was written against; informational, because a repository may lag a catalogue revision |
+| `default_branch` | yes | the branch the report records for the repository; otherwise resolved from `origin/HEAD` or the scope row |
+| `baseline` | only as text | `baseline.commit` is what `CORE-READINESS` matches as 40 hex; the checker itself does not read the object |
+| `waivers` | yes | `criterion`, a non-empty `reason` and an optional `expires` date |
 
 A waiver requires a non-empty `reason` and a known criterion id; a missing or
 blank reason is a configuration error. A waiver only converts `fail` to
@@ -249,6 +312,20 @@ aggregate counts for the 20 private repositories; no private repository name,
 URL or content may appear in it. That file is produced by the ledger milestone,
 not by this standard's data files, and the boundary is machine-checked by
 `ORG-LEDGER-PUBLIC-ONLY` and the `boundary` command.
+
+The ledger's member set is fixed by `scripts/build_public_ledger.py`:
+
+| Member | Content |
+|---|---|
+| `schema` | `aii-readiness-ledger/v1` |
+| `standard` | the catalogue `schema` and `version` the ledger was built from |
+| `scope` | how many scope rows are `public`, `private` and `total` |
+| `public` | `count`, an aggregate `summary`, and `repos`: every public repository in full |
+| `private` | `count` and an aggregate `summary` only |
+
+A public repository entry carries its `tier`, `tier_source`, `commit`,
+`default_branch`, per-criterion `criteria` and `summary`, exactly as the checker
+reports them.
 
 ## Running the checker
 

@@ -1343,6 +1343,53 @@ def test_shipped_org_tier_excludes_core_ci_on_and_only_there() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Catalogue vocabulary
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kind", "spec"),
+    [
+        ("file-contains", {"paths": ["README.md"], "regex": "x", "match": "All"}),
+        ("file-contains", {"paths": ["README.md"], "regex": "x", "on_empty": "n/a"}),
+        ("file-exists", {"paths": ["README.md"], "non_empty": "yes"}),
+        ("file-exists", {"paths": ["README.md"], "parses": "Yaml"}),
+        ("yaml-path", {"files": ["ci.yml"], "require": ["jobs"], "match": "Any"}),
+        ("command", {"command": ["true"], "timeout": "abc"}),
+        ("command", {"command": ["true"], "timeout": True}),
+        ("command", {"command": []}),
+        ("command", {"command": ["true", 1]}),
+        ("github-api", {"endpoints": ["repos/{oops}/contents"]}),
+    ],
+)
+def test_catalogue_vocabulary_is_validated(tmp_path: Path, kind: str, spec: dict[str, Any]) -> None:
+    """A spec value the evaluators would silently reinterpret is a catalogue error.
+
+    ``match: All`` would read as "any", ``on_empty: n/a`` as ``fail``, ``parses:
+    Yaml`` as no parse check at all, and a non-numeric ``timeout`` would raise
+    inside the runner instead of reporting a configuration error. Each of those
+    changes what the criterion measures without failing it, so the checker
+    refuses the value at load time rather than measuring something else.
+    """
+    module = _load_checker()
+    standard = _write_standard(tmp_path, [_criterion("CORE-X", kind, **spec)])
+    with pytest.raises(module.ConfigError):
+        module.load_standard(standard)
+
+
+def test_catalogue_vocabulary_error_is_exit_2(tmp_path: Path) -> None:
+    """A rejected spec value is a configuration error (exit 2), not a report."""
+    standard = _write_standard(
+        tmp_path,
+        [_criterion("CORE-X", "file-contains", paths=["README.md"], regex="x", match="All")],
+    )
+    repo = _make_repo(tmp_path, {"README.md": "hello\n"})
+    result = _run_cli(*_repo_args(repo, standard, "--json"))
+    assert result.returncode == 2, result.stderr
+    assert "match" in result.stderr
+
+
+# ---------------------------------------------------------------------------
 # The shipped catalogue
 # ---------------------------------------------------------------------------
 
@@ -1369,6 +1416,48 @@ def test_shipped_standard_declares_every_tier_and_known_kinds() -> None:
         assert criterion.within, criterion.id
         for tier in criterion.within:
             assert tier in standard.tiers, (criterion.id, tier)
+
+
+def test_standard_documents_every_catalogue_tier() -> None:
+    """The tier table in ``standards/README.md`` lists every declared tier.
+
+    A tier that exists in the catalogue but not in the human contract is
+    invisible to the person reviewing the standard, and the count in the version
+    history drifts from the table when a row is missing.
+    """
+    module = _load_checker()
+    standard = module.load_standard(SHIPPED_STANDARD)
+    contract = (ROOT / "standards" / "README.md").read_text(encoding="utf-8")
+    documented = [
+        row.split("`")[1]
+        for row in contract.splitlines()
+        if row.startswith("| `") and row.split("`")[1] in standard.tiers
+    ]
+    assert sorted(documented) == sorted(standard.tiers)
+
+
+def test_standard_documents_every_spec_key_the_catalogue_uses() -> None:
+    """The "Spec keys" table names every key a shipped criterion uses.
+
+    The catalogue is data, so its vocabulary is the contract's vocabulary; a key
+    the human contract does not name is a gap in the standard, and a value
+    outside the enumerated sets would change the measurement silently.
+    """
+    module = _load_checker()
+    standard = module.load_standard(SHIPPED_STANDARD)
+    contract = (ROOT / "standards" / "README.md").read_text(encoding="utf-8")
+    used: set[str] = set()
+    for criterion in standard.criteria:
+        used.update(criterion.spec)
+        for key, allowed in (
+            ("match", module.MATCH_VALUES),
+            ("on_empty", module.ON_EMPTY_VALUES),
+            ("parses", module.PARSE_VALUES),
+        ):
+            if key in criterion.spec:
+                assert criterion.spec[key] in allowed, (criterion.id, key, criterion.spec[key])
+    for key in sorted(used):
+        assert f"`{key}`" in contract, f"standards/README.md does not document spec key {key}"
 
 
 def test_shipped_standard_contains_the_catalogue_ids() -> None:
