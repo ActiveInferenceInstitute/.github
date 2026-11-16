@@ -720,6 +720,7 @@ criteria:
     within: [static-html]
     spec:
       paths: [".github/workflows/*.yml", ".github/workflows/*.yaml", pyproject.toml, package.json]
+      match: all
       forbid: "(--cov-fail-under|fail_under\\s*=|coverageThreshold)"
       on_empty: not-applicable
 
@@ -831,6 +832,7 @@ criteria:
     within: [content-data]
     spec:
       paths: [pyproject.toml, package.json, "requirements*.txt"]
+      match: all
       forbid: "(?i)\\b(pytest|jest|vitest|mocha)\\b"
       on_empty: not-applicable
 

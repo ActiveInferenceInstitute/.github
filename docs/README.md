@@ -42,9 +42,11 @@ profile/     the public organization profile README
 
 ```bash
 uv sync --frozen
-uv run pytest -q                                   # 113 offline tests
+uv run pytest -q                                   # offline suite
 uv run python scripts/check_readiness.py \
   --repo OWNER/REPO --path PATH_TO_REPO --json     # deterministic report
 ```
 
-The blocking gate and the fleet report need extra inputs; see [`checker.md`](checker.md).
+The blocking gate and fleet report need extra inputs; see [`checker.md`](checker.md).
+Raw fleet reports and operational scope may contain private identities and stay
+private. Publish only the generated ledger after builder and boundary admission.

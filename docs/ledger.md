@@ -41,6 +41,11 @@ row is public when its relative path carries the `Public` segment and private wh
 `Private`; a row with neither segment is a configuration error and stops the build. That makes
 the public/private split a configuration fact that can be reviewed, not an inference.
 
+The builder reuses the readiness checker's named-column scope parser, so column
+order does not change identity or visibility. Duplicate repository identities,
+including case-only collisions, are rejected before publication. Private-name
+and repository-URL checks are case-insensitive.
+
 ## Proving the boundary
 
 `ORG-LEDGER-PUBLIC-ONLY` asks whether the shipped ledger matches the catalogue's `forbid`

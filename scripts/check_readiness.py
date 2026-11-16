@@ -37,6 +37,7 @@ import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 
@@ -76,6 +77,10 @@ IGNORED_PARTS = frozenset(
 
 class ConfigError(Exception):
     """A usage, catalogue or manifest error (exit code 2)."""
+
+
+class EvidenceUnavailable(Exception):
+    """Repository evidence could not be measured (unavailable, exit code 3)."""
 
 
 @dataclass(frozen=True)
@@ -426,6 +431,29 @@ def _validate_endpoints(criterion_id: str, spec: dict[str, Any]) -> None:
             ) from exc
 
 
+def _validate_match_rules(criterion_id: str, spec: dict[str, Any]) -> None:
+    """Reject malformed patterns before any repository is evaluated."""
+    for key in ("regex", "forbid", "all_of", "any_of"):
+        if key not in spec:
+            continue
+        value = spec[key]
+        if key in ("regex", "forbid"):
+            if not isinstance(value, str):
+                raise ConfigError(f"{criterion_id}: {key} must be a string")
+            patterns = [value]
+        else:
+            if value is None:
+                raise ConfigError(f"{criterion_id}: {key} must be a string or a list of strings")
+            patterns = _as_string_list(value, f"{criterion_id}.{key}")
+        for pattern in patterns:
+            try:
+                re.compile(pattern, re.MULTILINE)
+            except (re.error, OverflowError, RecursionError) as exc:
+                raise ConfigError(
+                    f"{criterion_id}: invalid {key} regex {pattern!r}: {exc}"
+                ) from exc
+
+
 def _validate_spec(criterion_id: str, kind: str, spec: dict[str, Any]) -> None:
     _validate_common_spec(criterion_id, spec)
     if kind == "file-exists":
@@ -448,6 +476,7 @@ def _validate_spec(criterion_id: str, kind: str, spec: dict[str, Any]) -> None:
             )
         ):
             raise ConfigError(f"{criterion_id}: file-contains needs a match rule")
+        _validate_match_rules(criterion_id, spec)
     elif kind == "yaml-path":
         if not any(key in spec for key in ("file", "files")):
             raise ConfigError(f"{criterion_id}: yaml-path needs file or files")
@@ -582,9 +611,10 @@ def build_repo_index(repo_path: Path) -> RepoIndex:
     toplevel = _git_output(repo_path, ["rev-parse", "--show-toplevel"])
     if toplevel is not None and Path(toplevel.strip()).resolve() == repo_path.resolve():
         listing = _git_output(repo_path, ["ls-files", "-z"])
-        if listing is not None:
-            files = tuple(sorted(entry for entry in listing.split("\0") if entry))
-            return RepoIndex(repo_path=repo_path, files=files)
+        if listing is None:
+            raise EvidenceUnavailable("tracked file discovery failed: git ls-files unavailable")
+        files = tuple(sorted(entry for entry in listing.split("\0") if entry))
+        return RepoIndex(repo_path=repo_path, files=files)
     collected: list[str] = []
     for root, directories, filenames in os.walk(repo_path):
         directories[:] = sorted(
@@ -629,7 +659,7 @@ def _line_of(text: str, match: re.Match[str]) -> int:
 def _yaml_document(path: Path) -> Any:
     text = _read_text(path)
     if text is None:
-        return None
+        raise EvidenceUnavailable("file could not be read or is too large")
     try:
         return yaml.safe_load(text)
     except yaml.YAMLError as exc:
@@ -725,7 +755,7 @@ def evaluate_file_exists(criterion: Criterion, context: EvalContext) -> RunResul
         if missing:
             return RunResult("fail", "missing: " + ", ".join(missing))
     if not matched:
-        declared = _license_from_manifest(spec, context.repo_path)
+        declared = _license_from_manifest(spec, context)
         if declared is not None:
             return RunResult("pass", declared)
         if not patterns:
@@ -750,6 +780,8 @@ def evaluate_file_exists(criterion: Criterion, context: EvalContext) -> RunResul
         for path in readable:
             try:
                 _yaml_document(path)
+            except EvidenceUnavailable as exc:
+                return RunResult("unavailable", f"{_relative(path, context.repo_path)}: {exc}")
             except ConfigError:
                 return RunResult("fail", f"{_relative(path, context.repo_path)}: invalid YAML")
     elif parses == "json":
@@ -764,12 +796,10 @@ def evaluate_file_exists(criterion: Criterion, context: EvalContext) -> RunResul
     return RunResult("pass", _relative(readable[0], context.repo_path))
 
 
-def _license_from_manifest(spec: dict[str, Any], repo_path: Path) -> str | None:
+def _license_from_manifest(spec: dict[str, Any], context: EvalContext) -> str | None:
     declared_in = _as_string_list(spec.get("declared_in"), "declared_in")
-    for name in declared_in:
-        path = repo_path / name
-        if not path.is_file():
-            continue
+    for path in _expand(context, declared_in):
+        name = _relative(path, context.repo_path)
         if name.endswith(".json"):
             try:
                 document = json.loads(path.read_text(encoding="utf-8"))
@@ -921,16 +951,21 @@ def _floor_in_ci(context: EvalContext) -> RunResult:
 
 def _coverage_threshold_match(context: EvalContext) -> RunResult:
     pyproject = _read_text(context.repo_path / "pyproject.toml") or ""
-    declared = re.search(r"(?m)^\s*fail_under\s*=\s*(\d+)", pyproject)
+    digits = r"[0-9](?:_?[0-9])*"
+    number = (
+        rf"([+-]?(?:{digits}(?:\.(?:{digits})?)?|\.{digits})"
+        rf"(?:[eE][+-]?{digits})?)(?![\w.])"
+    )
+    declared = re.search(r"(?m)^\s*fail_under\s*=\s*" + number, pyproject)
     ci_text = _read_ci_text(context)
-    enforced = re.search(r"--cov-fail-under[=\s]+(\d+)", ci_text) or re.search(
-        r"(?m)^\s*fail_under\s*=\s*(\d+)", ci_text
+    enforced = re.search(r"--cov-fail-under[=\s]+" + number, ci_text) or re.search(
+        r"(?m)^\s*fail_under\s*=\s*" + number, ci_text
     )
     if declared is None and enforced is None:
         return RunResult("not-applicable", "no coverage threshold declared")
     if declared is None or enforced is None:
         return RunResult("not-applicable", "threshold declared in only one place")
-    if declared.group(1) == enforced.group(1):
+    if Decimal(declared.group(1).replace("_", "")) == Decimal(enforced.group(1).replace("_", "")):
         return RunResult("pass", f"threshold {declared.group(1)} in both places")
     return RunResult(
         "fail",
@@ -1321,17 +1356,25 @@ def evaluate_repo(
 ) -> dict[str, Any]:
     repo_path = Path(repo_path)
     manifest = load_manifest(repo_path)
-    index = build_repo_index(repo_path)
+    declared_tier = manifest.get("tier")
+    if tier is not None and tier not in standard.tiers:
+        raise ConfigError(f"unknown tier: {tier!r}")
+    if (
+        tier is None
+        and declared_tier is not None
+        and (not isinstance(declared_tier, str) or declared_tier not in standard.tiers)
+    ):
+        raise ConfigError(f".aii/readiness.json declares unknown tier {declared_tier!r}")
+    waivers = parse_waivers(standard, manifest, today or date.today())
+    try:
+        index = build_repo_index(repo_path)
+    except EvidenceUnavailable as exc:
+        return _unavailable_repo_report(standard, repo_id, str(exc))
     if tier is not None:
-        if tier not in standard.tiers:
-            raise ConfigError(f"unknown tier: {tier!r}")
         resolved_tier = tier
         tier_source = "cli"
     else:
-        declared_tier = manifest.get("tier")
         if declared_tier is not None:
-            if not isinstance(declared_tier, str) or declared_tier not in standard.tiers:
-                raise ConfigError(f".aii/readiness.json declares unknown tier {declared_tier!r}")
             resolved_tier = declared_tier
             tier_source = "manifest"
         else:
@@ -1345,7 +1388,6 @@ def evaluate_repo(
             tier_source = "classified"
 
     branch = resolve_default_branch(repo_path, manifest, default_branch)
-    waivers = parse_waivers(standard, manifest, today or date.today())
     context = EvalContext(
         repo_id=repo_id,
         repo_path=repo_path,
