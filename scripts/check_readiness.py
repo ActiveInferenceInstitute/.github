@@ -443,9 +443,7 @@ def _validate_match_rules(criterion_id: str, spec: dict[str, Any]) -> None:
             patterns = [value]
         else:
             if value is None:
-                raise ConfigError(
-                    f"{criterion_id}: {key} must be a string or a list of strings"
-                )
+                raise ConfigError(f"{criterion_id}: {key} must be a string or a list of strings")
             patterns = _as_string_list(value, f"{criterion_id}.{key}")
         for pattern in patterns:
             try:
