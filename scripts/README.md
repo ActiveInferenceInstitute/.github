@@ -19,6 +19,10 @@ uv run python scripts/build_public_ledger.py --report /tmp/fleet.json --scope /p
 uv run python scripts/check_ledger_boundary.py --ledger ../standards/public-ledger.json --scope /path/to/scope.tsv
 ```
 
+Raw fleet reports include private scope identities; deterministic output is not
+automatically safe to commit. Keep reports and scope private. Publish only the
+generated ledger after boundary admission against the same scope.
+
 `check_ledger_boundary.py` imports `build_public_ledger` as a sibling module
 (`sys.path[0]` is this directory when either runs), so the two must be moved together.
 
@@ -27,5 +31,6 @@ uv run python scripts/check_ledger_boundary.py --ledger ../standards/public-ledg
 The suite lives in `../tests/`; run it with `uv run pytest -q`. Do not generate or download
 fixtures here — every test is offline by design.
 
-> `audit_required_contexts.py` is untracked owner work-in-progress and is intentionally not part
-> of this repository's committed tooling. Do not stage or modify it.
+> `audit_required_contexts.py` and its dedicated test are absent from the current
+> repository. They are not available tooling or existing test coverage.
+> Required-context naming still depends on the hosted canary and adoption contracts.

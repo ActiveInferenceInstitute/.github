@@ -230,6 +230,215 @@ def test_file_exists_match_all_non_empty_fails_on_any_empty_file(tmp_path: Path)
     assert shipped.spec.get("non_empty") is True
 
 
+def test_git_file_discovery_failure_is_unavailable_not_waivable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed ls-files must not admit the tempting untracked files on disk."""
+    standard = _write_standard(
+        tmp_path,
+        [
+            _criterion("CORE-README", "file-exists", paths=["README.md"]),
+            _criterion("CORE-TEXT", "file-contains", paths=["README.md"], regex="proof"),
+            _criterion("CORE-YAML", "yaml-path", files=["ci.yml"], require=["jobs"]),
+        ],
+    )
+    repo = _make_repo(tmp_path, {"README.md": "proof\n", "ci.yml": "jobs: {}\n"})
+    _write_manifest(
+        repo,
+        {
+            "tier": "core",
+            "waivers": [
+                {"criterion": "CORE-README", "reason": "cannot excuse unavailable discovery"}
+            ],
+        },
+    )
+    module = _load_checker()
+
+    def git_output(path: Path, arguments: list[str], timeout: int = 30) -> str | None:
+        if arguments == ["rev-parse", "--show-toplevel"]:
+            return str(repo) + "\n"
+        return None
+
+    monkeypatch.setattr(module, "_git_output", git_output)
+    report = module.build_single_report(
+        module.load_standard(standard),
+        "A/R",
+        repo,
+        tier=None,
+        github=False,
+        today=module.date(2026, 11, 13),
+        github_client=None,
+    )
+    measured = report["repos"]["A/R"]
+    assert measured["tier"] == "unknown"
+    for entry in measured["criteria"].values():
+        assert entry["status"] == "unavailable", entry["evidence"]
+        assert "git ls-files" in entry["evidence"]
+    assert module.gate_exit_code(report) == 3
+
+
+def test_successful_empty_git_index_does_not_walk_untracked_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    standard = _write_standard(
+        tmp_path, [_criterion("CORE-README", "file-exists", paths=["README.md"])]
+    )
+    repo = _make_repo(tmp_path, {"README.md": "not tracked\n"})
+    module = _load_checker()
+
+    def git_output(path: Path, arguments: list[str], timeout: int = 30) -> str | None:
+        if arguments == ["rev-parse", "--show-toplevel"]:
+            return str(repo) + "\n"
+        if arguments == ["ls-files", "-z"]:
+            return ""
+        return None
+
+    monkeypatch.setattr(module, "_git_output", git_output)
+    report = module.evaluate_repo(module.load_standard(standard), "A/R", repo)
+    assert report["criteria"]["CORE-README"]["status"] == "fail"
+
+
+@pytest.mark.parametrize("scenario", ["unreadable", "oversized", "null", "tilde", "malformed"])
+def test_file_exists_yaml_distinguishes_unavailable_null_and_malformed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scenario: str
+) -> None:
+    standard = _write_standard(
+        tmp_path,
+        [
+            _criterion(
+                "CORE-YAML",
+                "file-exists",
+                paths=["document.yml"],
+                non_empty=True,
+                parses="yaml",
+                blocking=False,
+            ),
+            _criterion("CORE-MISSING", "file-exists", paths=["missing.txt"]),
+        ],
+    )
+    content = {
+        "unreadable": "null\n",
+        "oversized": "null\n",
+        "null": "null\n",
+        "tilde": "~\n",
+        "malformed": "[unclosed\n",
+    }[scenario]
+    repo = _make_repo(tmp_path, {"document.yml": content})
+    module = _load_checker()
+    target = repo / "document.yml"
+    if scenario == "oversized":
+        target.write_text("#" + "x" * module.MAX_TEXT_BYTES + "\n", encoding="utf-8")
+    elif scenario == "unreadable":
+        read_text = Path.read_text
+
+        def read_or_deny(path: Path, *args: Any, **kwargs: Any) -> str:
+            if path == target:
+                raise PermissionError("fixture denies document read")
+            return read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", read_or_deny)
+    if scenario in ("unreadable", "oversized"):
+        _write_manifest(
+            repo,
+            {"waivers": [{"criterion": "CORE-YAML", "reason": "cannot waive unavailable reads"}]},
+        )
+    report = module.build_single_report(
+        module.load_standard(standard),
+        "A/R",
+        repo,
+        tier=None,
+        github=False,
+        today=module.date(2026, 11, 13),
+        github_client=None,
+    )
+    expected = {
+        "unreadable": "unavailable",
+        "oversized": "unavailable",
+        "null": "pass",
+        "tilde": "pass",
+        "malformed": "fail",
+    }[scenario]
+    entry = report["repos"]["A/R"]["criteria"]["CORE-YAML"]
+    assert entry["status"] == expected, entry["evidence"]
+    assert module.gate_exit_code(report) == (3 if expected == "unavailable" else 1)
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("package.json", '{"license": "MIT"}\n'),
+        ("pyproject.toml", '[project]\nlicense = "MIT"\n'),
+    ],
+)
+@pytest.mark.parametrize("admission", ["tracked", "untracked", "ignored"])
+def test_manifest_license_uses_only_admitted_index_paths(
+    tmp_path: Path, name: str, content: str, admission: str
+) -> None:
+    standard = _write_standard(
+        tmp_path,
+        [_criterion("CORE-LICENSE", "file-exists", paths=["LICENSE"], declared_in=[name])],
+    )
+    repo = _make_repo(
+        tmp_path,
+        {
+            "README.md": "fixture\n",
+            ".gitignore": name + "\n" if admission == "ignored" else "",
+            name: content,
+        },
+    )
+    _git(repo, "init", "-q")
+    _git(repo, "add", "README.md", ".gitignore")
+    if admission == "tracked":
+        _git(repo, "add", name)
+    module = _load_checker()
+    entry = module.evaluate_repo(module.load_standard(standard), "A/R", repo)["criteria"][
+        "CORE-LICENSE"
+    ]
+    assert entry["status"] == ("pass" if admission == "tracked" else "fail"), entry["evidence"]
+    if admission == "tracked":
+        assert entry["evidence"].startswith(name + ":")
+
+
+@pytest.mark.parametrize(
+    ("manifest", "tier", "error"),
+    [
+        ({"tier": "unknown"}, None, "declares unknown tier"),
+        (
+            {"waivers": [{"criterion": "CORE-README", "reason": ""}]},
+            None,
+            "requires a non-empty reason",
+        ),
+        ({}, "unknown", "unknown tier"),
+    ],
+)
+def test_unavailable_git_index_does_not_hide_configuration_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    manifest: dict[str, Any],
+    tier: str | None,
+    error: str,
+) -> None:
+    standard = _write_standard(
+        tmp_path, [_criterion("CORE-README", "file-exists", paths=["README.md"])]
+    )
+    repo = _make_repo(tmp_path, {"README.md": "untracked\n"})
+    _write_manifest(repo, manifest)
+    module = _load_checker()
+
+    def git_output(path: Path, arguments: list[str], timeout: int = 30) -> str | None:
+        return str(repo) + "\n" if arguments == ["rev-parse", "--show-toplevel"] else None
+
+    monkeypatch.setattr(module, "_git_output", git_output)
+    args = _repo_args(repo, standard, "--json", "--check")
+    if tier is not None:
+        args += ("--tier", tier)
+    assert module.main([str(arg) for arg in args]) == 2
+    output = capsys.readouterr()
+    assert error in output.err
+    assert output.out == ""
+
+
 def test_file_contains_reports_relative_path_and_line(tmp_path: Path) -> None:
     standard = _write_standard(
         tmp_path,
@@ -379,7 +588,37 @@ def test_file_contains_floor_in_ci(tmp_path: Path) -> None:
     )
 
 
-def test_coverage_threshold_match(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("declared", "enforced", "expected"),
+    [
+        ("90", "90", "pass"),
+        ("90", "89", "fail"),
+        ("90.5", "90.9", "fail"),
+        ("90", "90.0", "pass"),
+        ("90.500", "90.5", "pass"),
+        ("90.5", "90.05", "fail"),
+        ("90.5", "9.05e1", "pass"),
+        ("90.00000000000000001", "90.00000000000000002", "fail"),
+        (None, None, "not-applicable"),
+        ("90.5", None, "not-applicable"),
+        (None, "90.5", "not-applicable"),
+    ],
+)
+@pytest.mark.parametrize(
+    "ci_template",
+    [
+        "run: pytest --cov-fail-under={threshold}\n",
+        "run: pytest --cov-fail-under {threshold}\n",
+        "fail_under = {threshold}\n",
+    ],
+)
+def test_coverage_threshold_match(
+    tmp_path: Path,
+    declared: str | None,
+    enforced: str | None,
+    expected: str,
+    ci_template: str,
+) -> None:
     standard = _write_standard(
         tmp_path,
         [
@@ -391,35 +630,24 @@ def test_coverage_threshold_match(tmp_path: Path) -> None:
             )
         ],
     )
-    equal = _make_repo(
-        tmp_path,
-        {
-            "pyproject.toml": "[tool.coverage.report]\nfail_under = 90\n",
-            ".github/workflows/ci.yml": "run: pytest --cov-fail-under=90\n",
-        },
-        name="equal",
+    declaration = f"fail_under = {declared}\n" if declared is not None else ""
+    enforcement = (
+        ci_template.format(threshold=enforced) if enforced is not None else "run: pytest\n"
     )
-    contradicting = _make_repo(
+    repo = _make_repo(
         tmp_path,
         {
-            "pyproject.toml": "[tool.coverage.report]\nfail_under = 90\n",
-            ".github/workflows/ci.yml": "run: pytest --cov-fail-under=89\n",
+            "pyproject.toml": "[tool.coverage.report]\n" + declaration,
+            ".github/workflows/ci.yml": enforcement,
         },
-        name="contradicting",
     )
     module = _load_checker()
-    assert (
-        module.evaluate_repo(module.load_standard(standard), "A/R", equal)["criteria"][
-            "PY-COVERAGE-MATCH"
-        ]["status"]
-        == "pass"
-    )
-    assert (
-        module.evaluate_repo(module.load_standard(standard), "A/R", contradicting)["criteria"][
-            "PY-COVERAGE-MATCH"
-        ]["status"]
-        == "fail"
-    )
+    entry = module.evaluate_repo(module.load_standard(standard), "A/R", repo)["criteria"][
+        "PY-COVERAGE-MATCH"
+    ]
+    assert entry["status"] == expected, entry["evidence"]
+    if expected == "fail":
+        assert entry["evidence"] == f"pyproject.toml says {declared}; CI enforces {enforced}"
 
 
 def test_yaml_path_resolves_workflow_trigger(tmp_path: Path) -> None:
@@ -1352,6 +1580,10 @@ def test_shipped_org_tier_excludes_core_ci_on_and_only_there() -> None:
     [
         ("file-contains", {"paths": ["README.md"], "regex": "x", "match": "All"}),
         ("file-contains", {"paths": ["README.md"], "regex": "x", "on_empty": "n/a"}),
+        ("file-contains", {"paths": ["README.md"], "regex": ["x"]}),
+        ("file-contains", {"paths": ["README.md"], "forbid": None}),
+        ("file-contains", {"paths": ["README.md"], "all_of": [1]}),
+        ("file-contains", {"paths": ["README.md"], "any_of": {"x": "y"}}),
         ("file-exists", {"paths": ["README.md"], "non_empty": "yes"}),
         ("file-exists", {"paths": ["README.md"], "parses": "Yaml"}),
         ("yaml-path", {"files": ["ci.yml"], "require": ["jobs"], "match": "Any"}),
@@ -1387,6 +1619,65 @@ def test_catalogue_vocabulary_error_is_exit_2(tmp_path: Path) -> None:
     result = _run_cli(*_repo_args(repo, standard, "--json"))
     assert result.returncode == 2, result.stderr
     assert "match" in result.stderr
+
+
+@pytest.mark.parametrize("key", ["regex", "forbid", "all_of", "any_of"])
+@pytest.mark.parametrize("matching_path", [False, True])
+@pytest.mark.parametrize("invalid_pattern", ["[", "x{999999999999999999999999999999}"])
+def test_invalid_catalogue_regex_is_exit_2_even_without_matching_files(
+    tmp_path: Path, key: str, matching_path: bool, invalid_pattern: str
+) -> None:
+    value: Any = invalid_pattern if key in ("regex", "forbid") else ["valid", invalid_pattern]
+    standard = _write_standard(
+        tmp_path,
+        [
+            _criterion(
+                "CORE-BAD-REGEX",
+                "file-contains",
+                paths=["README.md"],
+                on_empty="not-applicable",
+                **{key: value},
+            )
+        ],
+    )
+    repo = _make_repo(tmp_path, {"README.md": "valid\n"} if matching_path else {})
+    module = _load_checker()
+    with pytest.raises(module.ConfigError, match=f"CORE-BAD-REGEX: invalid {key} regex"):
+        module.load_standard(standard)
+    result = _run_cli(*_repo_args(repo, standard, "--json", "--check"))
+    assert result.returncode == 2, result.stderr
+    assert f"CORE-BAD-REGEX: invalid {key} regex" in result.stderr
+    assert result.stdout == ""
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("key", ["all_of", "any_of"])
+@pytest.mark.parametrize("matching_path", [False, True])
+def test_null_catalogue_pattern_collection_is_exit_2(
+    tmp_path: Path, key: str, matching_path: bool
+) -> None:
+    standard = _write_standard(
+        tmp_path,
+        [
+            _criterion(
+                "CORE-NULL-RULE",
+                "file-contains",
+                paths=["README.md"],
+                on_empty="not-applicable",
+                **{key: None},
+            )
+        ],
+    )
+    repo = _make_repo(tmp_path, {"README.md": "content\n"} if matching_path else {})
+    module = _load_checker()
+    error = f"CORE-NULL-RULE: {key} must be a string or a list of strings"
+    with pytest.raises(module.ConfigError, match=error):
+        module.load_standard(standard)
+    result = _run_cli(*_repo_args(repo, standard, "--json", "--check"))
+    assert result.returncode == 2, result.stderr
+    assert error in result.stderr
+    assert result.stdout == ""
+    assert "Traceback" not in result.stderr
 
 
 # ---------------------------------------------------------------------------

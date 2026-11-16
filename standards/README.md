@@ -39,7 +39,7 @@ is a configuration error (exit 2), never a silent skip.
 
 | Kind | Semantics | Reported `unavailable` when |
 |---|---|---|
-| `file-exists` | a path or glob is present in the tracked tree; `match: all` requires every declared path, and `non_empty: true` fails when a `match: all` path is empty (a single/any match passes if any matched file is non-empty) | the working copy could not be read |
+| `file-exists` | a path or glob is present in the tracked tree; `match: all` requires every declared path, and `non_empty` checks matched file bytes; optional parse checks validate content | tracked discovery is unavailable, or YAML input cannot be read or exceeds the text-size bound |
 | `file-contains` | a path is present and its regex / `all_of` / `any_of` / `forbid` rule matches; evidence names `path:line` for `match: any` and for `match: all` | the file exists but cannot be read or decoded |
 | `yaml-path` | a dotted path resolves in a YAML document, with `*` meaning "every child" | the document does not parse |
 | `command` | a **bounded** local command exits 0 | the tool is missing or the command times out |
@@ -50,6 +50,11 @@ the pattern is present, and a missing file is a definite answer; `unavailable`
 is reserved for the case where no answer can be obtained at all. The
 distinction is load-bearing: a waiver only converts `fail` to `waived`, so an
 absent path reported as `unavailable` could never be waived.
+
+With `parses: yaml`, unreadable or oversized input is `unavailable`, malformed
+YAML is `fail`, and valid YAML null parses successfully. A non-empty `null` or
+`~` document is not an empty file. For `yaml-path`, malformed YAML remains
+`unavailable`, and parsed null cannot satisfy a required dotted path.
 
 A `command` criterion runs the specific gate the criterion names. It never runs
 a repository's whole test suite.
@@ -64,6 +69,12 @@ would otherwise be read as "any", `on_empty: n/a` would become `fail`,
 raise inside the runner instead of reporting a catalogue error. All of those are
 exit `2`.
 
+Every `regex`, `forbid`, `all_of` and `any_of` pattern is compiled with multiline
+semantics at catalogue load. Invalid patterns or compilation limits are
+criterion- and key-specific configuration errors, even when no path matches.
+Single patterns must be strings; explicit null pattern lists are errors, not
+empty successful rules.
+
 | Key | Kind | Meaning |
 |---|---|---|
 | `path` / `paths` | `file-exists`, `file-contains` | one path or glob, or a list of them |
@@ -72,7 +83,7 @@ exit `2`.
 | `on_empty` | all | `fail`, `pass`, `unavailable` or `not-applicable`, reported when no declared path matched at all. The default is `fail`, except for `yaml-path`, which defaults to `not-applicable` |
 | `non_empty` | `file-exists` | `true` makes an empty matched file a `fail` |
 | `parses` | `file-exists` | `yaml` or `json`: every matched file must parse |
-| `declared_in` | `file-exists` | a manifest whose license field satisfies the criterion when no declared path matched |
+| `declared_in` | `file-exists` | manifest paths resolved through the admitted repository index; a license field may satisfy an otherwise unmatched criterion, but ignored or untracked manifests cannot supply evidence |
 | `timeout` | `command` | a positive whole number of seconds; a timeout reports `unavailable` |
 | `skip_if_no_paths` | `command` | `not-applicable` when none of the declared paths matched |
 | `require` / `expect` | `yaml-path` | dotted paths that must resolve, or a dotted path and the value it must equal |
@@ -90,9 +101,16 @@ rather than patterns:
 | Key | Criterion | Measurement |
 |---|---|---|
 | `floor_in_ci` | `PY-PYTHON-FLOOR` | the `requires-python` floor in `pyproject.toml` appears in a CI workflow |
-| `coverage_threshold_match` | `PY-COVERAGE-MATCH` | the coverage threshold declared in `pyproject.toml` equals the one CI enforces |
+| `coverage_threshold_match` | `PY-COVERAGE-MATCH` | compares complete decimal thresholds: `90.5` differs from `90.9`, while `90` equals `90.0`; absent or one-sided thresholds remain `not-applicable` |
 | `cname_match` | `HTML-CNAME-MATCH` | the host in `CNAME` appears in a CI workflow |
 | `node_pin` | `TS-NODE-PIN` | the Node version pinned by `.nvmrc` or `engines.node` appears in a CI workflow |
+
+### Inverse criteria
+
+`HTML-NO-COVERAGE-GATE` and `CD-NO-TESTFRAMEWORK-REQUIRED` use `match: all`:
+every matched file must avoid the forbidden pattern. A clean peer cannot mask a
+violation. Both remain nonblocking and are `not-applicable` without matching
+inputs; their tiers and forbidden expressions are unchanged.
 
 ### Lockfile precedence (`CORE-DEPENDABOT-ECOSYSTEM`)
 

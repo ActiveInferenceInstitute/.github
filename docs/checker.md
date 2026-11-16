@@ -54,13 +54,28 @@ Exit `3` is the important one: an `unavailable` measurement never becomes a pass
 becomes a plain failure. A repository with an unreachable API, a missing optional tool or a
 timed-out command exits `3` and stays visibly uncertified.
 
+## File discovery and unavailable evidence
+
+If a Git root is identified but tracked-file discovery fails, its tier and
+criteria remain unavailable; `--check` returns `3`. Untracked or ignored files
+never replace missing Git evidence. A successful empty index stays empty.
+Plain-directory fixtures may use the pruned filesystem walk. Invalid catalogue
+or waiver configuration still returns `2` before repository evaluation.
+
+See the [evaluation contract](../standards/README.md#the-five-evaluation-kinds)
+for YAML outcomes, indexed licenses, inverse criteria and numeric comparisons.
+
 ## Determinism
 
-The report schema is `aii-readiness-report/v1`. Two `--json` runs on one commit are
-byte-identical: output uses sorted keys, repository-relative paths, no wall-clock timestamps,
-no run identifiers and no absolute vault paths. That is why the report is safe to commit, diff
-and compare between commits. Do not add timestamps or host paths to the report — the
-`ORG-CHECKER-DETERMINISTIC` criterion protects this property.
+The report schema is `aii-readiness-report/v1`. Output uses sorted keys,
+repository-relative paths, no wall-clock timestamps, no run identifiers and no
+absolute vault paths. Determinism supports reproducible comparison, not public
+publication admission.
+
+`--all` includes private scope identities and per-criterion evidence. Keep raw
+fleet reports and operational scope outside public version control. Publish only
+the generated public ledger after `check_ledger_boundary.py` admits it against
+the same scope. `ORG-CHECKER-DETERMINISTIC` protects determinism, not privacy.
 
 ## Report shape
 
