@@ -40,7 +40,7 @@ from build_public_ledger import (
     PRIVATE,
     LedgerError,
     load_scope,
-    repository_name_pattern,
+    private_name_patterns,
 )
 
 LEDGER_CRITERION = "ORG-LEDGER-PUBLIC-ONLY"
@@ -85,8 +85,7 @@ def load_forbid_pattern(standard: Path, criterion_id: str = LEDGER_CRITERION) ->
 
 def scan_ledger(text: str, scope: dict[str, str], forbid: str) -> list[Finding]:
     """Every private-name occurrence in a ledger, under both rules."""
-    private = sorted(name for name, kind in scope.items() if kind == PRIVATE)
-    name_patterns = [(name, repository_name_pattern(name)) for name in private]
+    name_patterns = private_name_patterns(scope)
     catalogue_pattern = re.compile(forbid)
     findings: list[Finding] = []
     for number, line in enumerate(text.splitlines(), start=1):

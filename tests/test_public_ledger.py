@@ -95,6 +95,33 @@ def _run(script: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _assert_builder_refuses(
+    tmp_path: Path, report_file: Path, scope_file: Path, diagnostic: str
+) -> None:
+    out = tmp_path / "refused-ledger.json"
+    for previous in (None, b'{"previous": "ledger"}\r\n'):
+        if previous is not None:
+            out.write_bytes(previous)
+        result = _run(
+            BUILDER,
+            "--report",
+            str(report_file),
+            "--scope",
+            str(scope_file),
+            "--out",
+            str(out),
+        )
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert result.stdout == ""
+        assert "error:" in result.stderr
+        assert diagnostic in result.stderr
+        assert "Traceback" not in result.stderr
+        if previous is None:
+            assert not out.exists()
+        else:
+            assert out.read_bytes() == previous
+
+
 def test_builder_keeps_public_repos_in_full(tmp_path: Path) -> None:
     report = _report()
     ledger = builder.build_ledger(report, builder.load_scope(_scope_file(tmp_path)))
@@ -140,6 +167,87 @@ def test_builder_is_deterministic(tmp_path: Path) -> None:
     assert out_a.read_bytes() == out_b.read_bytes()
 
 
+@pytest.mark.parametrize("repo_id", ["owner/public-repo", "owner/secret-repo"])
+@pytest.mark.parametrize("present", [False, True])
+def test_builder_preserves_absent_summary_counts(
+    tmp_path: Path, repo_id: str, present: bool
+) -> None:
+    report = _report()
+    entry = report["repos"][repo_id]
+    del entry["summary"]
+    if present:
+        entry["summary"] = None
+
+    scope = builder.load_scope(_scope_file(tmp_path))
+    ledger = builder.build_ledger(report, scope)
+    visibility = scope[repo_id.split("/", 1)[1]]
+    assert ledger[visibility]["summary"] == _summary()
+    if visibility == builder.PUBLIC:
+        assert ledger["public"]["repos"][repo_id] == entry
+
+
+def test_builder_aggregates_integer_summary_counts(tmp_path: Path) -> None:
+    report = _report()
+    public_counts = dict(zip(builder.STATUSES, (2, 0, 1, 3, 4), strict=True))
+    private_counts = dict(zip(builder.STATUSES, (1, 2, 3, 4, 0), strict=True))
+    for repo_id, counts in (
+        ("owner/public-repo", public_counts),
+        ("owner/secret-repo", private_counts),
+    ):
+        report["repos"][repo_id]["summary"] = {
+            **counts,
+            "total": sum(counts.values()),
+            "blocking_failures": 0,
+            "blocking_unavailable": 1,
+        }
+
+    ledger = builder.build_ledger(report, builder.load_scope(_scope_file(tmp_path)))
+    assert ledger["public"]["summary"] == _summary(**public_counts)
+    assert ledger["private"]["summary"] == _summary(**private_counts)
+    assert ledger["public"]["repos"]["owner/public-repo"] == report["repos"]["owner/public-repo"]
+
+
+@pytest.mark.parametrize("repo_id", ["owner/public-repo", "owner/secret-repo"])
+@pytest.mark.parametrize(
+    "summary",
+    [
+        "oops",
+        "",
+        1,
+        0,
+        False,
+        [],
+        ["pass"],
+        {"pass": "oops"},
+        {"pass": "1"},
+        {"pass": {}},
+        {"pass": []},
+        {"pass": None},
+        {"pass": True},
+        {"pass": False},
+        {"pass": -1},
+        {"pass": 1.5},
+        {"pass": 1.0},
+        {"pass": float("inf")},
+        {"pass": float("nan")},
+        {"fail": -1},
+        {"waived": -1},
+        {"unavailable": -1},
+        {"not-applicable": -1},
+        {"total": -1},
+        {"blocking_failures": -1},
+        {"blocking_unavailable": -1},
+    ],
+)
+def test_builder_refuses_malformed_summaries(tmp_path: Path, repo_id: str, summary: Any) -> None:
+    report = _report()
+    report["repos"][repo_id]["summary"] = summary
+    scope_file = _scope_file(tmp_path)
+    with pytest.raises(builder.LedgerError, match="report summary"):
+        builder.build_ledger(report, builder.load_scope(scope_file))
+    _assert_builder_refuses(tmp_path, _report_file(tmp_path, report), scope_file, "report summary")
+
+
 def test_builder_rejects_a_report_row_outside_the_scope_table(tmp_path: Path) -> None:
     report = _report()
     report["repos"]["owner/unknown-repo"] = _entry(pass_=1)
@@ -154,13 +262,20 @@ def test_builder_rejects_a_scope_row_missing_from_the_report(tmp_path: Path) -> 
         builder.build_ledger(report, builder.load_scope(_scope_file(tmp_path)))
 
 
-def test_builder_refuses_a_public_entry_that_names_a_private_repo(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "evidence",
+    ["Private/secret-repo/README.md:1", "https://github.com/OWNER/SeCrEt-RePo"],
+)
+def test_builder_refuses_a_public_entry_that_names_a_private_repo(
+    tmp_path: Path, evidence: str
+) -> None:
     report = _report()
-    report["repos"]["owner/public-repo"]["criteria"]["CORE-README"]["evidence"] = (
-        "Private/secret-repo/README.md:1"
-    )
-    with pytest.raises(builder.LedgerError, match="private repository names reached the ledger"):
-        builder.build_ledger(report, builder.load_scope(_scope_file(tmp_path)))
+    report["repos"]["owner/public-repo"]["criteria"]["CORE-README"]["evidence"] = evidence
+    scope_file = _scope_file(tmp_path)
+    diagnostic = "private repository names reached the ledger"
+    with pytest.raises(builder.LedgerError, match=diagnostic):
+        builder.build_ledger(report, builder.load_scope(scope_file))
+    _assert_builder_refuses(tmp_path, _report_file(tmp_path, report), scope_file, diagnostic)
 
 
 def test_scope_visibility_reads_the_public_or_private_path_segment(tmp_path: Path) -> None:
@@ -171,8 +286,159 @@ def test_scope_visibility_reads_the_public_or_private_path_segment(tmp_path: Pat
 
     with pytest.raises(builder.LedgerError, match="no Public/Private segment"):
         builder.load_scope(_scope_file(tmp_path, "repo\trel\nmirror\tUsername/owner/mirror\n"))
-    with pytest.raises(builder.LedgerError, match="malformed scope row"):
+    with pytest.raises(builder.LedgerError, match="row without repo or rel"):
         builder.load_scope(_scope_file(tmp_path, "repo\trel\nbroken\n"))
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [
+        (
+            "repo",
+            "visibility",
+            "language",
+            "default_branch",
+            "disk_kb",
+            "rel",
+            "local",
+            "dot_aii",
+            "workflows",
+        ),
+        (
+            "visibility",
+            "language",
+            "repo",
+            "default_branch",
+            "rel",
+            "disk_kb",
+            "local",
+            "dot_aii",
+            "workflows",
+        ),
+    ],
+)
+def test_scope_named_columns_work_for_both_commands(
+    tmp_path: Path, columns: tuple[str, ...]
+) -> None:
+    rows = [
+        {
+            "repo": " Public-Repo ",
+            "rel": " Username/owner/Public/Public-Repo ",
+            "visibility": "PRIVATE",
+        },
+        {
+            "repo": "Secret-Repo",
+            "rel": "Username/owner/Private/Secret-Repo",
+            "visibility": "PUBLIC",
+        },
+    ]
+    text = "\t".join(columns) + "\n"
+    text += "\n".join("\t".join(row.get(column, "-") for column in columns) for row in rows)
+    scope_file = _scope_file(tmp_path, text + "\n")
+    assert builder.load_scope(scope_file) == {"Public-Repo": "public", "Secret-Repo": "private"}
+    report = _report()
+    report["repos"] = {
+        "owner/Public-Repo": report["repos"]["owner/public-repo"],
+        "owner/Secret-Repo": report["repos"]["owner/secret-repo"],
+    }
+    out = tmp_path / "public-ledger.json"
+    built = _run(
+        BUILDER,
+        "--report",
+        str(_report_file(tmp_path, report)),
+        "--scope",
+        str(scope_file),
+        "--out",
+        str(out),
+    )
+    assert built.returncode == 0, built.stderr
+    ledger = json.loads(out.read_text(encoding="utf-8"))
+    assert ledger["scope"] == {"total": 2, "public": 1, "private": 1}
+    assert ledger["public"]["repos"] == {"owner/Public-Repo": report["repos"]["owner/Public-Repo"]}
+    assert "Secret-Repo" not in out.read_text(encoding="utf-8")
+
+    result = _run(BOUNDARY, "--ledger", str(out), "--scope", str(scope_file))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "boundary: clean" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (("secret-repo", "Private"), ("secret-repo", "Public")),
+        (("secret-repo", "Public"), ("secret-repo", "Private")),
+        (("secret-repo", "Private"), ("secret-repo", "Private")),
+        (("secret-repo", "Public"), ("secret-repo", "Public")),
+        (("secret-repo", "Private"), ("SeCrEt-RePo", "Public")),
+        (("secret-repo", "Public"), ("SeCrEt-RePo", "Private")),
+        ((" secret-repo ", "Private"), ("secret-repo", "Public")),
+        (("secret-repo", "Public"), (" SeCrEt-RePo ", "Private")),
+    ],
+)
+def test_both_commands_refuse_duplicate_scope_identities(
+    tmp_path: Path, first: tuple[str, str], second: tuple[str, str]
+) -> None:
+    text = "repo\trel\npublic-repo\tUsername/owner/Public/public-repo\n"
+    text += "".join(
+        f"{name}\tUsername/owner/{visibility}/{name.strip()}\n"
+        for name, visibility in (first, second)
+    )
+    scope_file = _scope_file(tmp_path, text)
+    diagnostic = "duplicates repository"
+    with pytest.raises(builder.LedgerError, match=diagnostic):
+        builder.load_scope(scope_file)
+    _assert_builder_refuses(tmp_path, _report_file(tmp_path), scope_file, diagnostic)
+
+    ledger = tmp_path / "candidate.json"
+    ledger.write_text("{}\n", encoding="utf-8")
+    result = _run(BOUNDARY, "--ledger", str(ledger), "--scope", str(scope_file))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "error:" in result.stderr
+    assert diagnostic in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("text", "diagnostic"),
+    [
+        ("", "is empty"),
+        ("repo\trel\n", "has no repository rows"),
+        ("repo\tvisibility\npublic-repo\tPUBLIC\n", "must declare columns: repo, rel"),
+        ("repo\trel\nbroken\n", "row without repo or rel"),
+        ("repo\trel\npublic-repo\t \n", "row without repo or rel"),
+    ],
+)
+def test_both_commands_refuse_malformed_scope(tmp_path: Path, text: str, diagnostic: str) -> None:
+    scope_file = _scope_file(tmp_path, text)
+    with pytest.raises(builder.LedgerError, match=diagnostic):
+        builder.load_scope(scope_file)
+    _assert_builder_refuses(tmp_path, _report_file(tmp_path), scope_file, diagnostic)
+
+    ledger = tmp_path / "candidate.json"
+    ledger.write_text("{}\n", encoding="utf-8")
+    result = _run(BOUNDARY, "--ledger", str(ledger), "--scope", str(scope_file))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "error:" in result.stderr
+    assert diagnostic in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("affix", ["x", "0", "_", ".", "-"])
+@pytest.mark.parametrize("prefix", [False, True])
+def test_private_name_matching_preserves_whole_token_boundaries(
+    tmp_path: Path, affix: str, prefix: bool
+) -> None:
+    name = f"{affix}SeCrEt-RePo" if prefix else f"SeCrEt-RePo{affix}"
+    report = _report()
+    evidence = f"https://github.com/OWNER/{name}"
+    report["repos"]["owner/public-repo"]["criteria"]["CORE-README"]["evidence"] = evidence
+    scope = builder.load_scope(_scope_file(tmp_path))
+    ledger = builder.build_ledger(report, scope)
+    assert ledger["public"]["repos"]["owner/public-repo"] == report["repos"]["owner/public-repo"]
+    findings = boundary.scan_ledger(
+        builder.serialize(ledger), scope, boundary.load_forbid_pattern(SHIPPED_STANDARD)
+    )
+    assert findings == []
 
 
 def test_boundary_command_passes_a_clean_ledger(tmp_path: Path) -> None:
@@ -202,13 +468,17 @@ def test_boundary_command_fails_on_an_unquoted_private_name(tmp_path: Path) -> N
     assert "private repository name 'secret-repo'" in result.stdout
 
 
-def test_boundary_command_fails_on_a_private_repo_url(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "url", ["https://github.com/owner/secret-repo", "https://github.com/OWNER/SeCrEt-RePo"]
+)
+def test_boundary_command_fails_on_a_private_repo_url(tmp_path: Path, url: str) -> None:
     ledger = tmp_path / "public-ledger.json"
-    ledger.write_text('{"url": "https://github.com/owner/secret-repo"}\n', encoding="utf-8")
+    ledger.write_text(json.dumps({"url": url}) + "\n", encoding="utf-8")
 
     result = _run(BOUNDARY, "--ledger", str(ledger), "--scope", str(_scope_file(tmp_path)))
     assert result.returncode == 1
-    assert "secret-repo" in result.stdout
+    assert "private repository name 'secret-repo'" in result.stdout
+    assert result.stderr == ""
 
 
 def test_boundary_command_applies_the_catalogue_forbid_pattern(tmp_path: Path) -> None:

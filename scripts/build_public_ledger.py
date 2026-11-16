@@ -6,9 +6,9 @@ The org ``.github`` repository is public, so the published ledger carries every
 private repositories: no private repository name, URL or content may appear in
 it.
 
-Visibility comes from the scope table the checker already uses (``repo<TAB>rel``
-rows), never from a disk walk or a language guess: a row is public when its
-``rel`` path carries the ``Public`` segment and private when it carries
+Visibility comes from the scope table the checker already uses (named ``repo``
+and ``rel`` columns), never from a disk walk or a language guess: a row is public
+when its ``rel`` path carries the ``Public`` segment and private when it carries
 ``Private``.  A scope row without either segment is a configuration error.
 
 Usage::
@@ -32,6 +32,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from check_readiness import ConfigError, read_scope
+
 LEDGER_SCHEMA = "aii-readiness-ledger/v1"
 STATUSES = ("pass", "fail", "waived", "unavailable", "not-applicable")
 PUBLIC = "public"
@@ -44,17 +46,18 @@ class LedgerError(Exception):
 
 def load_scope(path: Path) -> dict[str, str]:
     """Return ``{repo: "public"|"private"}`` for every row of a scope table."""
-    lines = path.read_text(encoding="utf-8").splitlines()
-    if lines and lines[0].split("\t")[:2] == ["repo", "rel"]:
-        lines = lines[1:]
+    try:
+        scope_rows = read_scope(path)
+    except ConfigError as exc:
+        raise LedgerError(str(exc)) from exc
     rows: dict[str, str] = {}
-    for line in lines:
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        if len(parts) < 2 or not parts[0].strip() or not parts[1].strip():
-            raise LedgerError(f"{path}: malformed scope row: {line!r}")
-        repo, rel = parts[0].strip(), parts[1].strip()
+    seen: set[str] = set()
+    for row in scope_rows:
+        repo, rel = row["repo"].strip(), row["rel"].strip()
+        identity = repo.casefold()
+        if identity in seen:
+            raise LedgerError(f"scope file {path} duplicates repository {repo}")
+        seen.add(identity)
         segments = Path(rel).parts
         if "Public" in segments:
             rows[repo] = PUBLIC
@@ -62,31 +65,46 @@ def load_scope(path: Path) -> dict[str, str]:
             rows[repo] = PRIVATE
         else:
             raise LedgerError(f"{path}: {repo}: no Public/Private segment in {rel!r}")
-    if not rows:
-        raise LedgerError(f"{path}: no scope rows")
     return rows
 
 
-def _counts(summary: Any) -> dict[str, int]:
-    counts = {status: int((summary or {}).get(status, 0) or 0) for status in STATUSES}
+def _counts(summary: dict[str, int]) -> dict[str, int]:
+    counts = {status: summary.get(status, 0) for status in STATUSES}
     counts["total"] = sum(counts.values())
     return counts
 
 
-def _add(target: dict[str, int], source: dict[str, int]) -> None:
+def _add(target: dict[str, int], source: Any) -> None:
+    if source is None:
+        return
+    if not isinstance(source, dict):
+        raise LedgerError("report summary is not an object")
+    for status, count in source.items():
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise LedgerError(f"report summary count {status!r} must be a nonnegative integer")
     for status in STATUSES:
-        target[status] = target.get(status, 0) + int(source.get(status, 0) or 0)
+        target[status] = target.get(status, 0) + source.get(status, 0)
 
 
 def repository_name_pattern(name: str) -> re.Pattern[str]:
-    """Match a repository name as a whole token, even inside a longer URL."""
-    return re.compile(rf"(?<![A-Za-z0-9_.-]){re.escape(name)}(?![A-Za-z0-9_.-])")
+    """Match a repository name case-insensitively with whole-token boundaries."""
+    return re.compile(
+        rf"(?<![A-Za-z0-9_.-]){re.escape(name)}(?![A-Za-z0-9_.-])",
+        re.IGNORECASE | re.ASCII,
+    )
+
+
+def private_name_patterns(scope: dict[str, str]) -> list[tuple[str, re.Pattern[str]]]:
+    """Select and compile the scope's private names for both ledger consumers."""
+    return [
+        (name, repository_name_pattern(name))
+        for name in sorted(name for name, kind in scope.items() if kind == PRIVATE)
+    ]
 
 
 def boundary_violations(text: str, scope: dict[str, str]) -> list[str]:
     """Private repository names that appear anywhere in a candidate ledger."""
-    private = sorted(name for name, kind in scope.items() if kind == PRIVATE)
-    return [name for name in private if repository_name_pattern(name).search(text)]
+    return [name for name, pattern in private_name_patterns(scope) if pattern.search(text)]
 
 
 def build_ledger(report: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
@@ -110,9 +128,9 @@ def build_ledger(report: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
             raise LedgerError(f"report row {repo_id!r} is not in the scope table")
         if visibility == PUBLIC:
             public[repo_id] = entry
-            _add(public_counts, entry.get("summary") or {})
+            _add(public_counts, entry.get("summary"))
         else:
-            _add(private_counts, entry.get("summary") or {})
+            _add(private_counts, entry.get("summary"))
 
     missing = sorted(set(scope) - seen)
     if missing:
