@@ -599,9 +599,17 @@ def test_file_contains_floor_in_ci(tmp_path: Path) -> None:
         ("90.5", "90.05", "fail"),
         ("90.5", "9.05e1", "pass"),
         ("90.00000000000000001", "90.00000000000000002", "fail"),
+        ("9_0", "80", "fail"),
+        ("9_0", "90", "pass"),
+        ("9_0.5_0", "90.5", "pass"),
+        ("9_0.5", "90.9", "fail"),
+        ("9.0e+1_0", "9e10", "pass"),
+        ("90", "9_0", "pass"),
         (None, None, "not-applicable"),
         ("90.5", None, "not-applicable"),
         (None, "90.5", "not-applicable"),
+        ("9_0", None, "not-applicable"),
+        (None, "9_0", "not-applicable"),
     ],
 )
 @pytest.mark.parametrize(
@@ -642,10 +650,18 @@ def test_coverage_threshold_match(
         },
     )
     module = _load_checker()
-    entry = module.evaluate_repo(module.load_standard(standard), "A/R", repo)["criteria"][
-        "PY-COVERAGE-MATCH"
-    ]
+    report = module.build_single_report(
+        module.load_standard(standard),
+        "A/R",
+        repo,
+        tier=None,
+        github=False,
+        today=None,
+        github_client=None,
+    )
+    entry = report["repos"]["A/R"]["criteria"]["PY-COVERAGE-MATCH"]
     assert entry["status"] == expected, entry["evidence"]
+    assert module.gate_exit_code(report) == (1 if expected == "fail" else 0)
     if expected == "fail":
         assert entry["evidence"] == f"pyproject.toml says {declared}; CI enforces {enforced}"
 

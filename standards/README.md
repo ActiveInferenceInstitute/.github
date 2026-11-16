@@ -101,7 +101,7 @@ rather than patterns:
 | Key | Criterion | Measurement |
 |---|---|---|
 | `floor_in_ci` | `PY-PYTHON-FLOOR` | the `requires-python` floor in `pyproject.toml` appears in a CI workflow |
-| `coverage_threshold_match` | `PY-COVERAGE-MATCH` | compares complete decimal thresholds: `90.5` differs from `90.9`, while `90` equals `90.0`; absent or one-sided thresholds remain `not-applicable` |
+| `coverage_threshold_match` | `PY-COVERAGE-MATCH` | compares complete decimal thresholds, normalizing digit separators: `90.5` differs from `90.9`, while `9_0`, `90` and `90.0` are equal; absent or one-sided thresholds remain `not-applicable` |
 | `cname_match` | `HTML-CNAME-MATCH` | the host in `CNAME` appears in a CI workflow |
 | `node_pin` | `TS-NODE-PIN` | the Node version pinned by `.nvmrc` or `engines.node` appears in a CI workflow |
 

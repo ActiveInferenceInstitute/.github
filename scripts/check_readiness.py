@@ -953,7 +953,11 @@ def _floor_in_ci(context: EvalContext) -> RunResult:
 
 def _coverage_threshold_match(context: EvalContext) -> RunResult:
     pyproject = _read_text(context.repo_path / "pyproject.toml") or ""
-    number = r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)(?![\w.])"
+    digits = r"[0-9](?:_?[0-9])*"
+    number = (
+        rf"([+-]?(?:{digits}(?:\.(?:{digits})?)?|\.{digits})"
+        rf"(?:[eE][+-]?{digits})?)(?![\w.])"
+    )
     declared = re.search(r"(?m)^\s*fail_under\s*=\s*" + number, pyproject)
     ci_text = _read_ci_text(context)
     enforced = re.search(r"--cov-fail-under[=\s]+" + number, ci_text) or re.search(
@@ -963,7 +967,7 @@ def _coverage_threshold_match(context: EvalContext) -> RunResult:
         return RunResult("not-applicable", "no coverage threshold declared")
     if declared is None or enforced is None:
         return RunResult("not-applicable", "threshold declared in only one place")
-    if Decimal(declared.group(1)) == Decimal(enforced.group(1)):
+    if Decimal(declared.group(1).replace("_", "")) == Decimal(enforced.group(1).replace("_", "")):
         return RunResult("pass", f"threshold {declared.group(1)} in both places")
     return RunResult(
         "fail",
