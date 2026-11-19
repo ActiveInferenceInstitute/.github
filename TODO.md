@@ -28,10 +28,9 @@ decisions" because tightening them is a policy choice, not a bug.
       `Journal_Utilities` `"test"`, `GEN24` `"tests"`, `GEO_INFER` `"probes (...) (ubuntu-latest, 3.15)"`).
       Those repositories keep their own jobs until an adoption template for each shape exists.
       Enumerated in the header comment of [`python-ci.yml`](.github/workflows/python-ci.yml).
-- [x] Correct the stale audit-tool assertion: `scripts/audit_required_contexts.py`
-      and its dedicated test are absent. No existing tool or test coverage is
-      available to finish or remove; a future tool needs its own implementation
-      and acceptance. Hosted naming and adoption prerequisites above remain open.
+- [x] Add the [required-context auditor](scripts/audit_required_contexts.py) and its
+      tests. It compares effective default-branch rules with names derived from
+      workflow YAML. The hosted naming and adoption prerequisites above remain open.
 
 ## Environment prerequisites
 
