@@ -3,7 +3,7 @@
 `.github/workflows/` ships **`on: workflow_call`-only** workflows. They are published for
 adopters and are not triggered by this repository: nothing here declares `push` or
 `pull_request`, which is exactly why `CORE-CI-ON` is a tier exclusion on the `org` tier (see
-[`standard.md`](standard.md)). A repository adopts a workflow by calling it from its own
+[`standard.md`](../reference/standard.md)). A repository adopts a workflow by calling it from its own
 workflow, where it declares its own triggers.
 
 Every workflow follows the same shape: top-level `permissions:`, a `concurrency:` group with an

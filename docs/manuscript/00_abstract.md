@@ -1,0 +1,3 @@
+# Abstract
+
+An organization with repositories in several languages needs a common vocabulary for describing repository readiness. The Active Inference Institute encodes that vocabulary in a declarative catalogue and evaluates it with a checker whose reports separate negative results from unavailable measurements. This methods paper describes the evaluation inputs, the reproducible report, and the boundary that a fleet report crosses before parts of it can be published. It identifies the test evidence available in the public checkout and the measurements that still require authenticated repository access or a privately maintained scope table.

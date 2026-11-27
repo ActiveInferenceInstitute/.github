@@ -7,11 +7,11 @@ the entry point for people who want to understand, run or extend that standard.
 
 | Document | What it covers |
 | --- | --- |
-| [`standard.md`](standard.md) | What the standard is, the five evaluation kinds, tiers and exclusions, and how a repository adopts it. |
-| [`checker.md`](checker.md) | The `check_readiness.py` checker: CLI, report schema, exit codes and determinism. |
-| [`ledger.md`](ledger.md) | The public-only ledger: build, boundary rules and the machine-checked public/private split. |
-| [`workflows.md`](workflows.md) | The reusable `workflow_call` workflows and the shared composite action. |
-| [`testing.md`](testing.md) | The offline test suite, lint and typecheck gates, and how to run them. |
+| [`standard.md`](reference/standard.md) | What the standard is, the five evaluation kinds, tiers and exclusions, and how a repository adopts it. |
+| [`checker.md`](reference/checker.md) | The `check_readiness.py` checker: CLI, report schema, exit codes and determinism. |
+| [`ledger.md`](reference/ledger.md) | The public-only ledger: build, boundary rules and the machine-checked public/private split. |
+| [`workflows.md`](guides/workflows.md) | The reusable `workflow_call` workflows and the shared composite action. |
+| [`testing.md`](guides/testing.md) | The offline test suite, lint and typecheck gates, and how to run them. |
 
 The human contract for the standard itself lives next to the data it describes:
 [`../standards/README.md`](../standards/README.md). The criterion catalogue is
@@ -47,6 +47,10 @@ uv run python scripts/check_readiness.py \
   --repo OWNER/REPO --path PATH_TO_REPO --json     # deterministic report
 ```
 
-The blocking gate and fleet report need extra inputs; see [`checker.md`](checker.md).
+The blocking gate and fleet report need extra inputs; see [`checker.md`](reference/checker.md).
 Raw fleet reports and operational scope may contain private identities and stay
 private. Publish only the generated ledger after builder and boundary admission.
+
+## Manuscript
+
+- [Manuscript source and rendering](manuscript/README.md)

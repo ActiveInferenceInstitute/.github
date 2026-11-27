@@ -14,11 +14,11 @@ The modular documentation lives in [`docs/`](docs/README.md):
 
 | Document | Covers |
 | --- | --- |
-| [`docs/standard.md`](docs/standard.md) | the criterion catalogue, the five kinds, tiers and adoption |
-| [`docs/checker.md`](docs/checker.md) | `check_readiness.py`: CLI, report schema, exit codes, determinism |
-| [`docs/ledger.md`](docs/ledger.md) | the public-only ledger, its builder and the boundary command |
-| [`docs/workflows.md`](docs/workflows.md) | the reusable `workflow_call` workflows and the composite action |
-| [`docs/testing.md`](docs/testing.md) | the offline suite, lint and typecheck |
+| [`docs/reference/standard.md`](docs/reference/standard.md) | the criterion catalogue, the five kinds, tiers and adoption |
+| [`docs/reference/checker.md`](docs/reference/checker.md) | `check_readiness.py`: CLI, report schema, exit codes, determinism |
+| [`docs/reference/ledger.md`](docs/reference/ledger.md) | the public-only ledger, its builder and the boundary command |
+| [`docs/guides/workflows.md`](docs/guides/workflows.md) | the reusable `workflow_call` workflows and the composite action |
+| [`docs/guides/testing.md`](docs/guides/testing.md) | the offline suite, lint and typecheck |
 
 The criterion contract itself stays beside its data: [`standards/README.md`](standards/README.md).
 
@@ -60,7 +60,7 @@ uv run python scripts/check_ledger_boundary.py \
 ## Development
 
 Python 3.15, driven by `uv`; the toolchain is pinned by `uv.lock`. See
-[docs/testing.md](docs/testing.md) for the full gate list.
+[docs/guides/testing.md](docs/guides/testing.md) for the full gate list.
 
 ```bash
 uv sync --frozen                 # install the locked toolchain

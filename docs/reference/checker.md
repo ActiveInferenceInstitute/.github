@@ -1,7 +1,7 @@
 # The readiness checker
 
 `scripts/check_readiness.py` evaluates the criterion catalogue in
-[`../standards/tiers.yaml`](../standards/tiers.yaml) against one repository or a whole fleet. It
+[`../../standards/tiers.yaml`](../../standards/tiers.yaml) against one repository or a whole fleet. It
 is the only program that knows the five evaluation kinds; the criteria themselves are data.
 The module docstring at the top of the script is the source of truth for its contract — this
 page is the operator view.
@@ -62,7 +62,7 @@ never replace missing Git evidence. A successful empty index stays empty.
 Plain-directory fixtures may use the pruned filesystem walk. Invalid catalogue
 or waiver configuration still returns `2` before repository evaluation.
 
-See the [evaluation contract](../standards/README.md#the-five-evaluation-kinds)
+See the [evaluation contract](../../standards/README.md#the-five-evaluation-kinds)
 for YAML outcomes, indexed licenses, inverse criteria and numeric comparisons.
 
 ## Determinism
@@ -92,4 +92,4 @@ Waiver expiry is decided from `--today`, so a pinned date makes an old report re
 
 Neither ledger script runs in CI: the reusable `readiness.yml` workflow only calls
 `check_readiness.py` with `--check`. The ledger is rebuilt by the owner from a fleet report and the
-scope table; see [`ledger.md`](ledger.md) and [`workflows.md`](workflows.md).
+scope table; see [`ledger.md`](ledger.md) and [`workflows.md`](../guides/workflows.md).
