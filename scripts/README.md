@@ -1,8 +1,8 @@
 # scripts/ — the readiness tooling
 
 The Python tools behind the standard. They are run through `uv run` so they use the versions
-pinned in `uv.lock`; see [`../docs/checker.md`](../docs/checker.md) and
-[`../docs/ledger.md`](../docs/ledger.md) for the operator view.
+pinned in `uv.lock`; see [`../docs/reference/checker.md`](../docs/reference/checker.md) and
+[`../docs/reference/ledger.md`](../docs/reference/ledger.md) for the operator view.
 
 | Script | What it does |
 | --- | --- |

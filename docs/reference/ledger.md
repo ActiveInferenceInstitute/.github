@@ -1,6 +1,6 @@
 # The public readiness ledger
 
-[`../standards/public-ledger.json`](../standards/public-ledger.json) is the published record of
+[`../../standards/public-ledger.json`](../../standards/public-ledger.json) is the published record of
 fleet readiness. This repository is public, so the ledger may carry **every public repository's**
 full result and only **aggregate counts** for private repositories. No private repository name,
 URL or content may appear in it.
@@ -65,4 +65,4 @@ pattern too — so a ledger that would fail the criterion is rejected before pub
 Because the boundary command needs a scope table it is an **owner-operated** check: it runs
 where the private scope lives. The public CI gate runs the criterion-level version instead and
 cannot prove the wider claim on its own. See [`standard.md`](standard.md) for the tier rules and
-[`../standards/README.md`](../standards/README.md) for the human contract.
+[`../../standards/README.md`](../../standards/README.md) for the human contract.

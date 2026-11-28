@@ -1,0 +1,23 @@
+paper:
+  title: A Reproducible Repository Readiness Standard for the Active Inference Institute
+  subtitle: Declarative criteria, fail-closed checks, and publication boundaries
+authors:
+- name: Active Inference Institute
+publication:
+  repository_url: https://github.com/ActiveInferenceInstitute/.github
+  release_status: unreleased
+metadata:
+  language: en
+  license: MIT
+keywords:
+- research software
+- repository readiness
+- reproducibility
+manuscript_dir: docs/manuscript
+render:
+  formats:
+    pdf: true
+    html: true
+    slides: false
+    docx: false
+    epub: false

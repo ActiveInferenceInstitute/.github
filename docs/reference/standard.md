@@ -5,13 +5,13 @@ against. It is published from this repository, but nothing in it is repository-s
 criteria are shared, and each repository declares the tier it belongs to and any waivers in
 its own `.aii/readiness.json`.
 
-The authoritative human contract is [`../standards/README.md`](../standards/README.md); this
+The authoritative human contract is [`../../standards/README.md`](../../standards/README.md); this
 document is a map of it. Read that contract before changing a criterion — it is the document
 reviewers are held to.
 
 ## Criteria are data
 
-Adding or changing a criterion edits [`../standards/tiers.yaml`](../standards/tiers.yaml); it
+Adding or changing a criterion edits [`../../standards/tiers.yaml`](../../standards/tiers.yaml); it
 never requires editing Python. The catalogue carries its own `schema` and `version`, and the
 checker knows exactly **five fixed evaluation kinds**:
 
@@ -76,7 +76,7 @@ tool.
    `uv run python scripts/check_readiness.py --repo OWNER/REPO --path PATH_TO_REPO --json`
    (see [`checker.md`](checker.md)).
 2. Add or correct `.aii/readiness.json` with the measured tier.
-3. Call the reusable [`workflows.md`](workflows.md) gate, or the repository's own CI, so the
+3. Call the reusable [`workflows.md`](../guides/workflows.md) gate, or the repository's own CI, so the
    criterion set is enforced on pull requests.
 4. Record a waiver only for a measured `fail` with a real reason, not to work around an
    `unavailable`.
@@ -86,4 +86,4 @@ tool.
 The contract documents the limitations deliberately left in place — `CORE-CI-ON` does not check
 the pushed branch, `CORE-CI-CONCURRENCY` asks for a decision rather than the value `true`, a
 reusable-workflow call job cannot declare `timeout-minutes`, and the `org` tier does not measure
-the `workflow_call` trigger. See [`../standards/README.md`](../standards/README.md) for each.
+the `workflow_call` trigger. See [`../../standards/README.md`](../../standards/README.md) for each.
